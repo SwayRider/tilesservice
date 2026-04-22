@@ -1,0 +1,1612 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SwayRider Tileviewer</title>
+    <script src="https://unpkg.com/maplibre-gl@5.0.0/dist/maplibre-gl.js"></script>
+    <link href="https://unpkg.com/maplibre-gl@5.0.0/dist/maplibre-gl.css" rel="stylesheet" />
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            height: 100vh;
+            overflow: hidden;
+        }
+        #map {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            width: 100%;
+        }
+
+        /* Info Panel (top-left) */
+        .info-panel {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 12px 15px;
+            border-radius: 4px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+            font-size: 12px;
+            font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+            z-index: 1;
+            min-width: 280px;
+        }
+        .info-panel .label {
+            color: #666;
+            display: inline-block;
+            width: 60px;
+        }
+        .info-panel .value {
+            color: #2c3e50;
+            font-weight: 500;
+        }
+        .info-row {
+            margin: 4px 0;
+        }
+
+        /* Config Panel (top-right) */
+        .config-panel {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 15px;
+            border-radius: 4px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+            z-index: 1;
+            min-width: 300px;
+        }
+        .config-panel h3 {
+            margin: 0 0 10px 0;
+            font-size: 14px;
+            color: #2c3e50;
+        }
+        .config-panel input[type="text"] {
+            width: 100%;
+            padding: 6px 8px;
+            border: 1px solid #ddd;
+            border-radius: 3px;
+            font-size: 12px;
+            font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+            margin-bottom: 8px;
+        }
+        .config-panel button {
+            background: #3498db;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 500;
+            transition: background 0.2s;
+        }
+        .config-panel button:hover {
+            background: #2980b9;
+        }
+        .config-panel label {
+            display: flex;
+            align-items: center;
+            margin-top: 10px;
+            font-size: 12px;
+            cursor: pointer;
+            color: #2c3e50;
+        }
+        .config-panel input[type="checkbox"] {
+            margin-right: 8px;
+        }
+        .config-panel select {
+            width: 100%;
+            padding: 6px 8px;
+            border: 1px solid #ddd;
+            border-radius: 3px;
+            font-size: 12px;
+        }
+        .config-section {
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px solid #ddd;
+        }
+        .config-section-label {
+            display: block;
+            margin-bottom: 5px;
+            font-size: 12px;
+            font-weight: 500;
+            color: #2c3e50;
+        }
+
+        /* Error Banner (bottom-center) */
+        .error-banner {
+            position: absolute;
+            bottom: 40px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #e74c3c;
+            color: white;
+            padding: 12px 20px;
+            border-radius: 4px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+            z-index: 1;
+            font-size: 13px;
+            display: none;
+            max-width: 80%;
+        }
+        .error-banner.visible {
+            display: block;
+        }
+
+        /* MapLibre controls positioning */
+        .maplibregl-ctrl-top-right {
+            top: 180px;
+        }
+        .maplibregl-ctrl-bottom-right {
+            bottom: 10px;
+        }
+        .maplibregl-ctrl-bottom-left {
+            bottom: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+
+    <!-- Info Panel -->
+    <div class="info-panel">
+        <div class="info-row">
+            <span class="label">Zoom:</span>
+            <span class="value" id="info-zoom">-</span>
+        </div>
+        <div class="info-row">
+            <span class="label">Center:</span>
+            <span class="value" id="info-center">-</span>
+        </div>
+        <div class="info-row">
+            <span class="label">Tile:</span>
+            <span class="value" id="info-tile">-</span>
+        </div>
+    </div>
+
+    <!-- Config Panel -->
+    <div class="config-panel">
+        <h3>Tile Configuration</h3>
+        <input type="text" id="tile-url-input" placeholder="Tile URL template" />
+        <button onclick="reloadTiles()">Reload Tiles</button>
+        <label>
+            <input type="checkbox" id="grid-toggle" onchange="toggleGrid()" />
+            Show tile grid
+        </label>
+        <div class="config-section">
+            <span class="config-section-label">Map Style:</span>
+            <select id="style-select"></select>
+        </div>
+        <div class="config-section">
+            <label for="language-select" style="display: block; margin-bottom: 5px; font-size: 12px; font-weight: 500;">
+                Country Names:
+            </label>
+            <select id="language-select" style="width: 100%; padding: 6px 8px; border: 1px solid #ddd; border-radius: 3px; font-size: 12px;">
+                <option value="en">English</option>
+                <option value="nl">Nederlands (Dutch)</option>
+                <option value="de">Deutsch (German)</option>
+                <option value="fr">Français (French)</option>
+                <option value="es">Español (Spanish)</option>
+                <option value="pt">Português (Portuguese)</option>
+                <option value="ru">Русский (Russian)</option>
+                <option value="ar">العربية (Arabic)</option>
+                <option value="zhs">中文简体 (Chinese Simplified)</option>
+                <option value="zht">中文繁體 (Chinese Traditional)</option>
+                <option value="ja">日本語 (Japanese)</option>
+                <option value="ko">한국어 (Korean)</option>
+                <option value="hi">हिन्दी (Hindi)</option>
+                <option value="it">Italiano (Italian)</option>
+                <option value="pl">Polski (Polish)</option>
+                <option value="sv">Svenska (Swedish)</option>
+                <option value="tr">Türkçe (Turkish)</option>
+                <option value="el">Ελληνικά (Greek)</option>
+                <option value="bn">বাংলা (Bengali)</option>
+                <option value="fa">فارسی (Farsi)</option>
+                <option value="he">עברית (Hebrew)</option>
+                <option value="uk">Українська (Ukrainian)</option>
+                <option value="ur">اردو (Urdu)</option>
+                <option value="vi">Tiếng Việt (Vietnamese)</option>
+                <option value="hu">Magyar (Hungarian)</option>
+                <option value="id">Bahasa Indonesia (Indonesian)</option>
+            </select>
+        </div>
+    </div>
+
+
+    <!-- Error Banner -->
+    <div class="error-banner" id="error-banner"></div>
+
+    <script>
+        // Constants
+        const DEFAULT_CENTER = [4.9, 52.37]; // Amsterdam
+        const DEFAULT_ZOOM = 8;
+
+        // Get tile URL from input or URL params
+        function getTileUrl() {
+            const params = new URLSearchParams(window.location.search);
+            const urlParam = params.get('tileUrl');
+            const input = document.getElementById('tile-url-input');
+
+            if (urlParam) {
+                input.value = urlParam;
+                return urlParam;
+            }
+            if (input.value) {
+                return input.value;
+            }
+
+            const defaultUrl = 'https://tiles.hevanto-it.com/v1/tiles/base/{z}/{x}/{y}';
+            input.value = defaultUrl;
+            return defaultUrl;
+        }
+
+        // Derive the tilesservice base URL from a tile URL
+        // e.g. "http://localhost:8080/v1/tiles/base/{z}/{x}/{y}" → "http://localhost:8080"
+        function getTilesBaseUrl(tileUrl) {
+            try {
+                const u = new URL(tileUrl);
+                return u.origin;
+            } catch (e) {
+                return 'https://tiles.hevanto-it.com';
+            }
+        }
+
+        // Fetch available styles from the tilesservice and populate the dropdown.
+        // Selects the given defaultStyle (or "light" if not provided/found).
+        async function loadStyleList(baseUrl, defaultStyle) {
+            const select = document.getElementById('style-select');
+            select.innerHTML = '';
+
+            let styles = [{ name: 'light' }, { name: 'dark' }];
+            try {
+                const resp = await fetch(`${baseUrl}/v1/tiles/styles`);
+                if (resp.ok) {
+                    styles = await resp.json();
+                }
+            } catch (e) {
+                console.warn('Failed to fetch style list, using defaults:', e);
+            }
+
+            for (const s of styles) {
+                const opt = document.createElement('option');
+                opt.value = s.name;
+                opt.textContent = s.name;
+                select.appendChild(opt);
+            }
+
+            // Select default style
+            const target = defaultStyle || 'light';
+            const option = Array.from(select.options).find(o => o.value === target);
+            select.value = option ? target : (select.options[0] ? select.options[0].value : 'light');
+        }
+
+        // Fetch a style JSON from the tilesservice and patch the tile source URL.
+        async function fetchStyle(baseUrl, styleName, tileUrl) {
+            const resp = await fetch(`${baseUrl}/v1/tiles/styles/${styleName}`);
+            if (!resp.ok) {
+                throw new Error(`Failed to fetch style "${styleName}": ${resp.status}`);
+            }
+            const style = await resp.json();
+            // Patch tile source to point to the configured tile URL
+            if (style.sources && style.sources.swayrider) {
+                style.sources.swayrider.tiles = [tileUrl];
+            }
+            return style;
+        }
+
+
+        // --- removed createStyle(tileUrl): styles are now fetched from the tilesservice ---
+        // Legacy stub kept as a comment to document prior inline style.
+        // The inline style was extracted to assets/map/styles/light.json.
+
+        // Create MapLibre style object — REMOVED; now replaced by fetchStyle()
+        // (preserving remaining code below)
+        function _unused_createStyle_placeholder() {
+            return {
+                version: 8,
+                glyphs: 'https://fonts.openmaptiles.org/{fontstack}/{range}.pbf',
+                sources: {
+                    'swayrider': {
+                        type: 'vector',
+                        tiles: [''],
+                        minzoom: 0,
+                        maxzoom: 16
+                    }
+                },
+                layers: [
+                    // Background layer
+                    {
+                        id: 'background',
+                        type: 'background',
+                        paint: {
+                            'background-color': '#a0c8e8'
+                        }
+                    },
+
+                    // Ocean layer (L0 - visible at all zoom levels)
+                    {
+                        id: 'ocean',
+                        type: 'fill',
+                        source: 'swayrider',
+                        'source-layer': 'ocean',
+                        paint: {
+                            'fill-color': '#a0c8e8'
+                        }
+                    },
+
+                    // Land layer (optional, may not exist in tiles)
+                    {
+                        id: 'land',
+                        type: 'fill',
+                        source: 'swayrider',
+                        'source-layer': 'land',
+                        paint: {
+                            //'fill-color': '#f8f4f0'
+                            'fill-color': '#e0f0d8'
+                        }
+                    },
+
+                    // Water layer (L1-L3 - zoom 7+)
+                    {
+                        id: 'water',
+                        type: 'fill',
+                        source: 'swayrider',
+                        'source-layer': 'water',
+                        paint: {
+                            'fill-color': '#a0c8e8'
+                        },
+                        minzoom: 7
+                    },
+
+                    // Forest layer (L2-L3 - zoom 11+)
+                    {
+                        id: 'forest',
+                        type: 'fill',
+                        source: 'swayrider',
+                        'source-layer': 'forest',
+                        paint: {
+                            'fill-color': '#c8e6c8'
+                        },
+                        minzoom: 11
+                    },
+
+                    // Grass layer
+                    /*{
+                        id: 'grass',
+                        type: 'fill',
+                        source: 'swayrider',
+                        'source-layer': 'grass',
+                        paint: {
+                            'fill-color': '#e0f0d8'
+                        },
+                        minzoom: 7
+                    },*/
+
+                    // Urban layer
+                    {
+                        id: 'urban',
+                        type: 'fill',
+                        source: 'swayrider',
+                        'source-layer': 'urban',
+                        paint: {
+                            'fill-color': '#f4f4f4'
+                        },
+                        minzoom: 7
+                    },
+
+                    // Waterways — per-type layers, bottom→top: ditch → stream → canal → river-minor → river.
+                    // Major rivers (named or width > 15 m) appear at Z7; minor rivers at Z10.
+                    // Rivers draw last so they paint over tributaries at confluences.
+                    // Each layer shares the same 4-stop zoom-step structure (base
+                    // multipliers 0.75 / 1.25 / 2.0 / 3.0); minzoom controls when
+                    // each type becomes visible.
+
+                    // ditch + drain  (minzoom 14)
+                    {
+                        id: 'waterways-ditch',
+                        type: 'line',
+                        source: 'swayrider',
+                        'source-layer': 'waterways',
+                        filter: ['all', ['!=', ['get', 'tunnel'], 'yes'], ['any', ['==', ['get', 'waterway'], 'ditch'], ['==', ['get', 'waterway'], 'drain']]],
+                        paint: {
+                            'line-color': '#a0c8e8',
+                            'line-width': [
+                                'step', ['zoom'],
+                                1.0,
+                                7,  ['*', 0.75, ['case',
+                                    ['>', ['to-number', ['get', 'width']], 0],
+                                        ['min', ['max', ['/', ['to-number', ['get', 'width']], 15], 0.5], 4],
+                                    ['has', 'name'], 0.75,
+                                    0.5
+                                ]],
+                                10, ['*', 1.25, ['case',
+                                    ['>', ['to-number', ['get', 'width']], 0],
+                                        ['min', ['max', ['/', ['to-number', ['get', 'width']], 15], 0.5], 4],
+                                    ['has', 'name'], 0.75,
+                                    0.5
+                                ]],
+                                14, ['*', 2.0, ['case',
+                                    ['>', ['to-number', ['get', 'width']], 0],
+                                        ['min', ['max', ['/', ['to-number', ['get', 'width']], 15], 0.5], 4],
+                                    ['has', 'name'], 0.75,
+                                    0.5
+                                ]],
+                                16, ['*', 3.0, ['case',
+                                    ['>', ['to-number', ['get', 'width']], 0],
+                                        ['min', ['max', ['/', ['to-number', ['get', 'width']], 15], 0.5], 4],
+                                    ['has', 'name'], 0.75,
+                                    0.5
+                                ]]
+                            ]
+                        },
+                        minzoom: 14
+                    },
+
+                    // stream  (minzoom 12)
+                    {
+                        id: 'waterways-stream',
+                        type: 'line',
+                        source: 'swayrider',
+                        'source-layer': 'waterways',
+                        filter: ['all', ['!=', ['get', 'tunnel'], 'yes'], ['==', ['get', 'waterway'], 'stream']],
+                        paint: {
+                            'line-color': '#a0c8e8',
+                            'line-width': [
+                                'step', ['zoom'],
+                                1.0,
+                                7,  ['*', 0.75, ['case',
+                                    ['>', ['to-number', ['get', 'width']], 0],
+                                        ['min', ['max', ['/', ['to-number', ['get', 'width']], 15], 0.5], 4],
+                                    ['has', 'name'], 1.05,
+                                    0.7
+                                ]],
+                                10, ['*', 1.25, ['case',
+                                    ['>', ['to-number', ['get', 'width']], 0],
+                                        ['min', ['max', ['/', ['to-number', ['get', 'width']], 15], 0.5], 4],
+                                    ['has', 'name'], 1.05,
+                                    0.7
+                                ]],
+                                14, ['*', 2.0, ['case',
+                                    ['>', ['to-number', ['get', 'width']], 0],
+                                        ['min', ['max', ['/', ['to-number', ['get', 'width']], 15], 0.5], 4],
+                                    ['has', 'name'], 1.05,
+                                    0.7
+                                ]],
+                                16, ['*', 3.0, ['case',
+                                    ['>', ['to-number', ['get', 'width']], 0],
+                                        ['min', ['max', ['/', ['to-number', ['get', 'width']], 15], 0.5], 4],
+                                    ['has', 'name'], 1.05,
+                                    0.7
+                                ]]
+                            ]
+                        },
+                        minzoom: 12
+                    },
+
+                    // canal  (minzoom 8)
+                    {
+                        id: 'waterways-canal',
+                        type: 'line',
+                        source: 'swayrider',
+                        'source-layer': 'waterways',
+                        filter: ['all', ['!=', ['get', 'tunnel'], 'yes'], ['==', ['get', 'waterway'], 'canal']],
+                        paint: {
+                            'line-color': '#a0c8e8',
+                            'line-width': [
+                                'step', ['zoom'],
+                                1.0,
+                                7,  ['*', 0.75, ['case',
+                                    ['>', ['to-number', ['get', 'width']], 0],
+                                        ['min', ['max', ['/', ['to-number', ['get', 'width']], 15], 0.5], 4],
+                                    ['has', 'name'], 1.5,
+                                    1.0
+                                ]],
+                                10, ['*', 1.25, ['case',
+                                    ['>', ['to-number', ['get', 'width']], 0],
+                                        ['min', ['max', ['/', ['to-number', ['get', 'width']], 15], 0.5], 4],
+                                    ['has', 'name'], 1.5,
+                                    1.0
+                                ]],
+                                14, ['*', 2.0, ['case',
+                                    ['>', ['to-number', ['get', 'width']], 0],
+                                        ['min', ['max', ['/', ['to-number', ['get', 'width']], 15], 0.5], 4],
+                                    ['has', 'name'], 1.5,
+                                    1.0
+                                ]],
+                                16, ['*', 3.0, ['case',
+                                    ['>', ['to-number', ['get', 'width']], 0],
+                                        ['min', ['max', ['/', ['to-number', ['get', 'width']], 15], 0.5], 4],
+                                    ['has', 'name'], 1.5,
+                                    1.0
+                                ]]
+                            ]
+                        },
+                        minzoom: 8
+                    },
+
+                    // river-minor  (minzoom 10)
+                    {
+                        id: 'waterways-river-minor',
+                        type: 'line',
+                        source: 'swayrider',
+                        'source-layer': 'waterways',
+                        filter: ['all', ['!=', ['get', 'tunnel'], 'yes'], ['==', ['get', 'waterway'], 'river'], ['!', ['has', 'name']], ['!', ['>', ['to-number', ['get', 'width']], 15]]],
+                        paint: {
+                            'line-color': '#a0c8e8',
+                            'line-width': [
+                                'step', ['zoom'],
+                                1.0,
+                                7,  ['*', 0.75, ['case',
+                                    ['>', ['to-number', ['get', 'width']], 0],
+                                        ['min', ['max', ['/', ['to-number', ['get', 'width']], 15], 0.5], 4],
+                                    ['has', 'name'], 2.25,
+                                    1.5
+                                ]],
+                                10, ['*', 1.25, ['case',
+                                    ['>', ['to-number', ['get', 'width']], 0],
+                                        ['min', ['max', ['/', ['to-number', ['get', 'width']], 15], 0.5], 4],
+                                    ['has', 'name'], 2.25,
+                                    1.5
+                                ]],
+                                14, ['*', 2.0, ['case',
+                                    ['>', ['to-number', ['get', 'width']], 0],
+                                        ['min', ['max', ['/', ['to-number', ['get', 'width']], 15], 0.5], 4],
+                                    ['has', 'name'], 2.25,
+                                    1.5
+                                ]],
+                                16, ['*', 3.0, ['case',
+                                    ['>', ['to-number', ['get', 'width']], 0],
+                                        ['min', ['max', ['/', ['to-number', ['get', 'width']], 15], 0.5], 4],
+                                    ['has', 'name'], 2.25,
+                                    1.5
+                                ]]
+                            ]
+                        },
+                        minzoom: 10
+                    },
+
+                    // river  (minzoom 7, major: named or width > 15 m)
+                    {
+                        id: 'waterways-river',
+                        type: 'line',
+                        source: 'swayrider',
+                        'source-layer': 'waterways',
+                        filter: ['all', ['!=', ['get', 'tunnel'], 'yes'], ['==', ['get', 'waterway'], 'river'], ['any', ['has', 'name'], ['>', ['to-number', ['get', 'width']], 15]]],
+                        paint: {
+                            'line-color': '#a0c8e8',
+                            'line-width': [
+                                'step', ['zoom'],
+                                1.0,
+                                7,  ['*', 0.75, ['case',
+                                    ['>', ['to-number', ['get', 'width']], 0],
+                                        ['min', ['max', ['/', ['to-number', ['get', 'width']], 15], 0.5], 4],
+                                    ['has', 'name'], 2.25,
+                                    1.5
+                                ]],
+                                10, ['*', 1.25, ['case',
+                                    ['>', ['to-number', ['get', 'width']], 0],
+                                        ['min', ['max', ['/', ['to-number', ['get', 'width']], 15], 0.5], 4],
+                                    ['has', 'name'], 2.25,
+                                    1.5
+                                ]],
+                                14, ['*', 2.0, ['case',
+                                    ['>', ['to-number', ['get', 'width']], 0],
+                                        ['min', ['max', ['/', ['to-number', ['get', 'width']], 15], 0.5], 4],
+                                    ['has', 'name'], 2.25,
+                                    1.5
+                                ]],
+                                16, ['*', 3.0, ['case',
+                                    ['>', ['to-number', ['get', 'width']], 0],
+                                        ['min', ['max', ['/', ['to-number', ['get', 'width']], 15], 0.5], 4],
+                                    ['has', 'name'], 2.25,
+                                    1.5
+                                ]]
+                            ]
+                        },
+                        minzoom: 7
+                    },
+
+                    // Boundaries
+                    {
+                        id: 'boundaries',
+                        type: 'line',
+                        source: 'swayrider',
+                        'source-layer': 'boundaries',
+                        paint: {
+                            'line-color': '#999999',
+                            'line-width': 1,
+                            'line-dasharray': [4, 2]
+                        }
+                    },
+
+                    // Country Names (L0 only, Z0-6) - Multilingual
+                    {
+                        id: 'country-names',
+                        type: 'symbol',
+                        source: 'swayrider',
+                        'source-layer': 'country_labels',
+                        layout: {
+                            'symbol-placement': 'point',      // Force point placement (uses polygon centroid)
+                            'text-anchor': 'center',          // Center text on the placement point
+                            'text-justify': 'center',         // Horizontally center-justify the text
+                            'text-optional': true,            // Allow labels to be hidden if they don't fit
+                            'text-field': buildNameExpression(currentNameField),
+                            'text-font': ['Open Sans Regular'],
+                            'text-size': [
+                                'interpolate',
+                                ['linear'],
+                                ['zoom'],
+                                0, 8,    // Small at world view
+                                3, 12,   // Medium at continental view
+                                6, 16    // Larger at regional view
+                            ],
+                            'text-transform': 'uppercase',
+                            'text-letter-spacing': 0.1,
+                            'text-max-width': 10,
+                            'text-allow-overlap': false,
+                            'text-ignore-placement': false
+                        },
+                        paint: {
+                            'text-color': '#333333',
+                            'text-halo-color': '#ffffff',
+                            'text-halo-width': 1.5,
+                            'text-halo-blur': 0.5
+                        },
+                        maxzoom: 7  // Hide at Z7+ where L1 takes over
+                    },
+
+                    // ===== RAILWAYS =====
+
+                    // Railway Tunnels (z_order 151-153)
+                    {
+                        id: 'railways-tunnel',
+                        type: 'line',
+                        source: 'swayrider',
+                        'source-layer': 'railways',
+                        filter: ['all',
+                            ['>=', ['get', 'z_order'], 151],
+                            ['<=', ['get', 'z_order'], 153],
+                            ['<=', ['get', 'minzoom'], ['zoom']]
+                        ],
+                        layout: {
+                            'line-cap': 'butt',
+                            'line-join': 'round'
+                        },
+                        paint: {
+                            'line-color': '#e0e0e0',
+                            'line-width': [
+                                'interpolate',
+                                ['linear'],
+                                ['zoom'],
+                                7, 1.0,
+                                12, 1.5,
+                                16, 2.0
+                            ],
+                            'line-dasharray': [3, 2]  // Dashed for tunnels
+                        },
+                        minzoom: 7
+                    },
+
+                    // Railway Normal (z_order 161-163)
+                    {
+                        id: 'railways-normal',
+                        type: 'line',
+                        source: 'swayrider',
+                        'source-layer': 'railways',
+                        filter: ['all',
+                            ['>=', ['get', 'z_order'], 161],
+                            ['<=', ['get', 'z_order'], 163],
+                            ['<=', ['get', 'minzoom'], ['zoom']]
+                        ],
+                        layout: {
+                            'line-cap': 'butt',
+                            'line-join': 'round'
+                        },
+                        paint: {
+                            'line-color': '#e0e0e0',
+                            'line-width': [
+                                'interpolate',
+                                ['linear'],
+                                ['zoom'],
+                                7, 1.0,
+                                12, 1.5,
+                                16, 2.0
+                            ]
+                        },
+                        minzoom: 7
+                    },
+
+                    // Railway Bridges (z_order 171-173)
+                    {
+                        id: 'railways-bridge',
+                        type: 'line',
+                        source: 'swayrider',
+                        'source-layer': 'railways',
+                        filter: ['all',
+                            ['>=', ['get', 'z_order'], 171],
+                            ['<=', ['get', 'z_order'], 173],
+                            ['<=', ['get', 'minzoom'], ['zoom']]
+                        ],
+                        layout: {
+                            'line-cap': 'butt',
+                            'line-join': 'round'
+                        },
+                        paint: {
+                            'line-color': '#e0e0e0',
+                            'line-width': [
+                                'interpolate',
+                                ['linear'],
+                                ['zoom'],
+                                7, 1.0,
+                                12, 1.5,
+                                16, 2.0
+                            ]
+                        },
+                        minzoom: 7
+                    },
+
+                    // Railway Ties - Tunnel (z_order 151-153)
+                    {
+                        id: 'railways-ties-tunnel',
+                        type: 'symbol',
+                        source: 'swayrider',
+                        'source-layer': 'railways',
+                        filter: ['all',
+                            ['>=', ['get', 'z_order'], 151],
+                            ['<=', ['get', 'z_order'], 153],
+                            ['<=', ['get', 'minzoom'], ['zoom']]
+                        ],
+                        layout: {
+                            'symbol-placement': 'line',
+                            'symbol-spacing': [
+                                'interpolate',
+                                ['linear'],
+                                ['zoom'],
+                                12, 40,
+                                14, 25,
+                                16, 15
+                            ],
+                            'icon-image': 'railway-tie',
+                            'icon-size': [
+                                'interpolate',
+                                ['linear'],
+                                ['zoom'],
+                                12, 0.6,
+                                14, 0.9,
+                                16, 1.2
+                            ],
+                            'icon-rotation-alignment': 'map',
+                            'icon-pitch-alignment': 'map',
+                            'icon-allow-overlap': true,
+                            'icon-ignore-placement': true
+                        },
+                        minzoom: 12
+                    },
+
+                    // Railway Ties - Normal (z_order 161-163)
+                    {
+                        id: 'railways-ties-normal',
+                        type: 'symbol',
+                        source: 'swayrider',
+                        'source-layer': 'railways',
+                        filter: ['all',
+                            ['>=', ['get', 'z_order'], 161],
+                            ['<=', ['get', 'z_order'], 163],
+                            ['<=', ['get', 'minzoom'], ['zoom']]
+                        ],
+                        layout: {
+                            'symbol-placement': 'line',
+                            'symbol-spacing': [
+                                'interpolate',
+                                ['linear'],
+                                ['zoom'],
+                                12, 40,
+                                14, 25,
+                                16, 15
+                            ],
+                            'icon-image': 'railway-tie',
+                            'icon-size': [
+                                'interpolate',
+                                ['linear'],
+                                ['zoom'],
+                                12, 0.6,
+                                14, 0.9,
+                                16, 1.2
+                            ],
+                            'icon-rotation-alignment': 'map',
+                            'icon-pitch-alignment': 'map',
+                            'icon-allow-overlap': true,
+                            'icon-ignore-placement': true
+                        },
+                        minzoom: 12
+                    },
+
+                    // Railway Ties - Bridge (z_order 171-173)
+                    {
+                        id: 'railways-ties-bridge',
+                        type: 'symbol',
+                        source: 'swayrider',
+                        'source-layer': 'railways',
+                        filter: ['all',
+                            ['>=', ['get', 'z_order'], 171],
+                            ['<=', ['get', 'z_order'], 173],
+                            ['<=', ['get', 'minzoom'], ['zoom']]
+                        ],
+                        layout: {
+                            'symbol-placement': 'line',
+                            'symbol-spacing': [
+                                'interpolate',
+                                ['linear'],
+                                ['zoom'],
+                                12, 40,
+                                14, 25,
+                                16, 15
+                            ],
+                            'icon-image': 'railway-tie',
+                            'icon-size': [
+                                'interpolate',
+                                ['linear'],
+                                ['zoom'],
+                                12, 0.6,
+                                14, 0.9,
+                                16, 1.2
+                            ],
+                            'icon-rotation-alignment': 'map',
+                            'icon-pitch-alignment': 'map',
+                            'icon-allow-overlap': true,
+                            'icon-ignore-placement': true
+                        },
+                        minzoom: 12
+                    },
+
+                    // ===== ROADS =====
+
+                    // Tunnels (z_order < 100) - Casing
+                    /*{
+                        id: 'roads-tunnel-casing',
+                        type: 'line',
+                        source: 'swayrider',
+                        'source-layer': 'roads',
+                        filter: ['all',
+                            ['<', ['get', 'z_order'], 100],
+                            ['<=', ['get', 'minzoom'], ['zoom']]
+                        ],
+                        layout: {
+                            'line-cap': 'round',
+                            'line-join': 'round'
+                        },
+                        paint: {
+                            'line-color': [
+                                'match',
+                                ['get', 'highway'],
+                                'motorway', '#b0b0b0',
+                                'motorway_link', '#b0b0b0',
+                                'trunk', '#c0c0c0',
+                                'primary', '#c0c0c0',
+                                'secondary', '#c0c0c0',
+                                'tertiary', '#c0c0c0',
+                                '#d0d0d0'
+                            ],
+                            'line-width': [
+                                'interpolate',
+                                ['exponential', 1.5],
+                                ['zoom'],
+                                12, ['match', ['get', 'highway'], ['motorway', 'motorway_link'], 4, 6.5],
+                                16, ['match', ['get', 'highway'], ['motorway', 'motorway_link'], 14, 16.5]
+                            ]
+                        },
+                        minzoom: 13
+                    },*/
+
+                    // Tunnels (z_order < 100) - Fill
+                    {
+                        id: 'roads-tunnel-fill',
+                        type: 'line',
+                        source: 'swayrider',
+                        'source-layer': 'roads',
+                        filter: ['all',
+                            ['<', ['get', 'z_order'], 100],
+                            ['<=', ['get', 'minzoom'], ['zoom']]
+                        ],
+                        layout: {
+                            'line-cap': 'round',
+                            'line-join': 'round'
+                        },
+                        paint: {
+                            'line-color': [
+                                'match',
+                                ['get', 'highway'],
+                                'motorway', '#b0b0b0',
+                                'motorway_link', '#b0b0b0',
+                                'trunk', '#c0c0c0',
+                                'primary', '#c0c0c0',
+                                'secondary', '#c0c0c0',
+                                'tertiary', '#c0c0c0',
+                                '#d0d0d0'
+                            ],
+                            'line-width': [
+                                'interpolate',
+                                ['exponential', 1.5],
+                                ['zoom'],
+                                7, 0.8,
+                                8, 1,
+                                12, 4,
+                                16, 14
+                            ],
+                            'line-dasharray': [2, 2]
+                        },
+                        minzoom: 6
+                    },
+
+                    // Links (z_order 100-139) - Casing
+                    {
+                        id: 'roads-link-casing',
+                        type: 'line',
+                        source: 'swayrider',
+                        'source-layer': 'roads',
+                        filter: ['all',
+                            ['>=', ['get', 'z_order'], 100],
+                            ['<', ['get', 'z_order'], 140],
+                            ['<=', ['get', 'minzoom'], ['zoom']]
+                        ],
+                        layout: {
+                            'line-cap': 'round',
+                            'line-join': 'round'
+                        },
+                        paint: {
+                            'line-color': [
+                                'match',
+                                ['get', 'highway'],
+                                'motorway_link', '#b0b0b0',
+                                '#d0d0d0'
+                            ],
+                            'line-width': [
+                                'interpolate',
+                                ['exponential', 1.5],
+                                ['zoom'],
+                                12, ['match', ['get', 'highway'], 'motorway_link', 4, 4],
+                                16, ['match', ['get', 'highway'], 'motorway_link', 14, 7.5]
+                            ]
+                        },
+                        minzoom: 13
+                    },
+
+                    // Links (z_order 100-139) - Fill
+                    {
+                        id: 'roads-link-fill',
+                        type: 'line',
+                        source: 'swayrider',
+                        'source-layer': 'roads',
+                        filter: ['all',
+                            ['>=', ['get', 'z_order'], 100],
+                            ['<', ['get', 'z_order'], 140],
+                            ['<=', ['get', 'minzoom'], ['zoom']]
+                        ],
+                        layout: {
+                            'line-cap': 'round',
+                            'line-join': 'round'
+                        },
+                        paint: {
+                            'line-color': [
+                                'match',
+                                ['get', 'highway'],
+                                'motorway_link', '#b0b0b0',
+                                '#d0d0d0'
+                            ],
+                            'line-width': [
+                                'interpolate',
+                                ['exponential', 1.5],
+                                ['zoom'],
+                                7, ['match', ['get', 'highway'], 'motorway_link', 0.8, 0],
+                                8, ['match', ['get', 'highway'], 'motorway_link', 1, 0.5],
+                                12, ['match', ['get', 'highway'], 'motorway_link', 4, 1.5],
+                                16, ['match', ['get', 'highway'], 'motorway_link', 14, 5]
+                            ]
+                        },
+                        minzoom: 6
+                    },
+
+                    // Minor Roads (z_order 140-159) - Casing
+                    /*{
+                        id: 'roads-minor-casing',
+                        type: 'line',
+                        source: 'swayrider',
+                        'source-layer': 'roads',
+                        filter: ['all',
+                            ['>=', ['get', 'z_order'], 140],
+                            ['<', ['get', 'z_order'], 160],
+                            ['<=', ['get', 'minzoom'], ['zoom']]
+                        ],
+                        layout: {
+                            'line-cap': 'round',
+                            'line-join': 'round'
+                        },
+                        paint: {
+                            'line-color': "#d0d0d0",
+                            'line-width': [
+                                'interpolate',
+                                ['exponential', 1.5],
+                                ['zoom'],
+                                12, 4.5,
+                                16, 9.5
+                            ]
+                        },
+                        minzoom: 13
+                    },*/
+
+                    // Minor Roads (z_order 140-159) - Fill
+                    {
+                        id: 'roads-minor-fill',
+                        type: 'line',
+                        source: 'swayrider',
+                        'source-layer': 'roads',
+                        filter: ['all',
+                            ['>=', ['get', 'z_order'], 140],
+                            ['<', ['get', 'z_order'], 160],
+                            ['<=', ['get', 'minzoom'], ['zoom']]
+                        ],
+                        layout: {
+                            'line-cap': 'round',
+                            'line-join': 'round'
+                        },
+                        paint: {
+                            'line-color': "#d0d0d0",
+                            'line-width': [
+                                'interpolate',
+                                ['exponential', 1.5],
+                                ['zoom'],
+                                8, 0.5,
+                                12, 2,
+                                16, 7
+                            ]
+                        },
+                        minzoom: 6
+                    },
+
+                    // Major Roads (z_order 160-189) - Casing
+                    /*{
+                        id: 'roads-major-casing',
+                        type: 'line',
+                        source: 'swayrider',
+                        'source-layer': 'roads',
+                        filter: ['all',
+                            ['>=', ['get', 'z_order'], 160],
+                            ['<', ['get', 'z_order'], 190],
+                            ['<=', ['get', 'minzoom'], ['zoom']]
+                        ],
+                        layout: {
+                            'line-cap': 'round',
+                            'line-join': 'round'
+                        },
+                        paint: {
+                            'line-color': [
+                                'match',
+                                ['get', 'highway'],
+                                'trunk', '#c0c0c0',
+                                'primary', '#c0c0c0',
+                                'secondary', '#c0c0c0',
+                                'tertiary', '#c0c0c0',
+                                '#d0d0d0'
+                            ],
+                            'line-width': [
+                                'interpolate',
+                                ['exponential', 1.5],
+                                ['zoom'],
+                                12, 5.5,
+                                16, 12.5
+                            ]
+                        },
+                        minzoom: 13
+                    },*/
+
+                    // Major Roads (z_order 160-189) - Fill
+                    {
+                        id: 'roads-major-fill',
+                        type: 'line',
+                        source: 'swayrider',
+                        'source-layer': 'roads',
+                        filter: ['all',
+                            ['>=', ['get', 'z_order'], 160],
+                            ['<', ['get', 'z_order'], 190],
+                            ['<=', ['get', 'minzoom'], ['zoom']]
+                        ],
+                        layout: {
+                            'line-cap': 'round',
+                            'line-join': 'round'
+                        },
+                        paint: {
+                            'line-color': [
+                                'match',
+                                ['get', 'highway'],
+                                'trunk', '#c0c0c0',
+                                'primary', '#c0c0c0',
+                                'secondary', '#c0c0c0',
+                                'tertiary', '#c0c0c0',
+                                '#d0d0d0'
+                            ],
+                            'line-width': [
+                                'interpolate',
+                                ['exponential', 1.5],
+                                ['zoom'],
+                                8, 0.8,
+                                12, 3,
+                                16, 10
+                            ]
+                        },
+                        minzoom: 5
+                    },
+
+                    // Highways (z_order 190-200) - Casing
+                    {
+                        id: 'roads-highway-casing',
+                        type: 'line',
+                        source: 'swayrider',
+                        'source-layer': 'roads',
+                        filter: ['all',
+                            ['>=', ['get', 'z_order'], 190],
+                            ['<=', ['get', 'z_order'], 200],
+                            ['<=', ['get', 'minzoom'], ['zoom']]
+                        ],
+                        layout: {
+                            'line-cap': 'round',
+                            'line-join': 'round'
+                        },
+                        paint: {
+                            'line-color': [
+                                'match',
+                                ['get', 'highway'],
+                                'motorway', '#b0b0b0',
+                                'motorway_link', '#b0b0b0',
+                                '#d0d0d0'
+                            ],
+                            'line-width': [
+                                'interpolate',
+                                ['exponential', 1.5],
+                                ['zoom'],
+                                12, 4,
+                                16, 14
+                            ]
+                        },
+                        minzoom: 13
+                    },
+
+                    // Highways (z_order 190-200) - Fill
+                    {
+                        id: 'roads-highway-fill',
+                        type: 'line',
+                        source: 'swayrider',
+                        'source-layer': 'roads',
+                        filter: ['all',
+                            ['>=', ['get', 'z_order'], 190],
+                            ['<=', ['get', 'z_order'], 200],
+                            ['<=', ['get', 'minzoom'], ['zoom']]
+                        ],
+                        layout: {
+                            'line-cap': 'round',
+                            'line-join': 'round'
+                        },
+                        paint: {
+                            'line-color': [
+                                'match',
+                                ['get', 'highway'],
+                                'motorway', '#b0b0b0',
+                                'motorway_link', '#b0b0b0',
+                                '#d0d0d0'
+                            ],
+                            'line-width': [
+                                'interpolate',
+                                ['exponential', 1.5],
+                                ['zoom'],
+                                7, 0.8,
+                                8, 1,
+                                12, 4,
+                                16, 14
+                            ]
+                        },
+                        minzoom: 4
+                    },
+
+                    // Bridges (z_order > 200) - Casing
+                    /*{
+                        id: 'roads-bridge-casing',
+                        type: 'line',
+                        source: 'swayrider',
+                        'source-layer': 'roads',
+                        filter: ['all',
+                            ['>', ['get', 'z_order'], 200],
+                            ['<=', ['get', 'minzoom'], ['zoom']]
+                        ],
+                        layout: {
+                            'line-cap': 'round',
+                            'line-join': 'round'
+                        },
+                        paint: {
+                            'line-color': [
+                                'match',
+                                ['get', 'highway'],
+                                'motorway', '#b0b0b0',
+                                'motorway_link', '#b0b0b0',
+                                'trunk', '#c0c0c0',
+                                'primary', '#c0c0c0',
+                                'secondary', '#c0c0c0',
+                                'tertiary', '#c0c0c0',
+                                '#d0d0d0'
+                            ],
+                            'line-width': [
+                                'interpolate',
+                                ['exponential', 1.5],
+                                ['zoom'],
+                                12, ['match', ['get', 'highway'], ['motorway', 'motorway_link'], 4, 6.5],
+                                16, ['match', ['get', 'highway'], ['motorway', 'motorway_link'], 14, 16.5]
+                            ]
+                        },
+                        minzoom: 13
+                    },*/
+
+                    // Bridges (z_order > 200) - Fill
+                    {
+                        id: 'roads-bridge-fill',
+                        type: 'line',
+                        source: 'swayrider',
+                        'source-layer': 'roads',
+                        filter: ['all',
+                            ['>', ['get', 'z_order'], 200],
+                            ['<=', ['get', 'minzoom'], ['zoom']]
+                        ],
+                        layout: {
+                            'line-cap': 'round',
+                            'line-join': 'round'
+                        },
+                        paint: {
+                            'line-color': [
+                                'match',
+                                ['get', 'highway'],
+                                'motorway', '#b0b0b0',
+                                'motorway_link', '#b0b0b0',
+                                'trunk', '#c0c0c0',
+                                'primary', '#c0c0c0',
+                                'secondary', '#c0c0c0',
+                                'tertiary', '#c0c0c0',
+                                '#d0d0d0'
+                            ],
+                            'line-width': [
+                                'interpolate',
+                                ['exponential', 1.5],
+                                ['zoom'],
+                                7, 0.8,
+                                8, 1,
+                                12, 4,
+                                16, 14
+                            ]
+                        },
+                        minzoom: 4
+                    }
+                ]
+            };
+        } // end _unused_createStyle_placeholder
+
+        // Language detection and selection for country names
+        function getBrowserLanguage() {
+            const lang = navigator.language || navigator.userLanguage;
+            // Extract base language code (e.g., 'en-US' -> 'en', 'nl-NL' -> 'nl')
+            return lang.split('-')[0].toLowerCase();
+        }
+
+        // Map browser language codes to Natural Earth field names
+        function getNameField(langCode) {
+            const fieldMap = {
+                'en': 'name_en',
+                'nl': 'name_nl',
+                'de': 'name_de',
+                'fr': 'name_fr',
+                'es': 'name_es',
+                'pt': 'name_pt',
+                'ru': 'name_ru',
+                'ar': 'name_ar',
+                'zh': 'name_zhs',  // Default to simplified Chinese
+                'ja': 'name_ja',
+                'ko': 'name_ko',
+                'hi': 'name_hi',
+                'it': 'name_it',
+                'pl': 'name_pl',
+                'sv': 'name_sv',
+                'tr': 'name_tr',
+                'el': 'name_el',
+                'bn': 'name_bn',
+                'fa': 'name_fa',
+                'he': 'name_he',
+                'uk': 'name_uk',
+                'ur': 'name_ur',
+                'vi': 'name_vi',
+                'hu': 'name_hu',
+                'id': 'name_id'
+            };
+            return fieldMap[langCode] || 'name_en';  // Fallback to English
+        }
+
+        // Initialize with browser language
+        let currentLanguage = getBrowserLanguage();
+        let currentNameField = getNameField(currentLanguage);
+
+        // Function to build text-field expression with fallback to English
+        function buildNameExpression(nameField) {
+            return [
+                'coalesce',
+                ['get', nameField],
+                ['get', 'name_en']  // Fallback to English if translation missing
+            ];
+        }
+
+        // Initialize map (declared here, assigned during async init)
+        let map;
+
+        // Update info panel
+        function updateInfo() {
+            const center = map.getCenter();
+            const zoom = map.getZoom();
+            const tileCoord = lonLatToTile(center.lng, center.lat, Math.floor(zoom));
+
+            document.getElementById('info-zoom').textContent = zoom.toFixed(2);
+            document.getElementById('info-center').textContent =
+                `${center.lat.toFixed(4)}, ${center.lng.toFixed(4)}`;
+            document.getElementById('info-tile').textContent =
+                `${tileCoord.z}/${tileCoord.x}/${tileCoord.y}`;
+        }
+
+        // Reload tiles when the tile URL is changed by the user.
+        // Re-fetches the style list and the currently selected style.
+        async function reloadTiles() {
+            const newTileUrl = getTileUrl();
+            const baseUrl = getTilesBaseUrl(newTileUrl);
+            const selectedStyle = document.getElementById('style-select').value || 'light';
+            const currentCenter = map.getCenter();
+            const currentZoom = map.getZoom();
+
+            // Re-populate style dropdown (tile URL may point to a different tilesservice)
+            await loadStyleList(baseUrl, selectedStyle);
+
+            const styleName = document.getElementById('style-select').value;
+            let style;
+            try {
+                style = await fetchStyle(baseUrl, styleName, newTileUrl);
+            } catch (e) {
+                console.error('Failed to load style:', e);
+                return;
+            }
+
+            map.remove();
+
+            map = new maplibregl.Map({
+                container: 'map',
+                style: style,
+                center: [currentCenter.lng, currentCenter.lat],
+                zoom: currentZoom
+            });
+
+            setupEventHandlers();
+
+            const gridToggle = document.getElementById('grid-toggle');
+            if (gridToggle.checked) {
+                map.on('load', () => { addGridLayer(); });
+            }
+        }
+
+        // Toggle tile grid overlay
+        let gridVisible = false;
+
+        function toggleGrid() {
+            const checkbox = document.getElementById('grid-toggle');
+            gridVisible = checkbox.checked;
+
+            if (gridVisible) {
+                if (map.isStyleLoaded()) {
+                    addGridLayer();
+                } else {
+                    map.on('load', addGridLayer);
+                }
+            } else {
+                if (map.getLayer('tile-grid')) {
+                    map.removeLayer('tile-grid');
+                }
+                if (map.getSource('tile-grid')) {
+                    map.removeSource('tile-grid');
+                }
+            }
+        }
+
+        // Add tile grid overlay
+        function addGridLayer() {
+            if (!map.getSource('tile-grid')) {
+                map.addSource('tile-grid', {
+                    type: 'geojson',
+                    data: {
+                        type: 'FeatureCollection',
+                        features: []
+                    }
+                });
+            }
+
+            if (!map.getLayer('tile-grid')) {
+                map.addLayer({
+                    id: 'tile-grid',
+                    type: 'line',
+                    source: 'tile-grid',
+                    paint: {
+                        'line-color': '#ff0000',
+                        'line-width': 1,
+                        'line-opacity': 0.5
+                    }
+                });
+            }
+
+            updateGrid();
+        }
+
+        // Update tile grid
+        function updateGrid() {
+            if (!gridVisible || !map.getSource('tile-grid')) return;
+
+            const bounds = map.getBounds();
+            const zoom = Math.floor(map.getZoom());
+
+            const nw = lonLatToTile(bounds.getWest(), bounds.getNorth(), zoom);
+            const se = lonLatToTile(bounds.getEast(), bounds.getSouth(), zoom);
+
+            const features = [];
+
+            for (let x = nw.x - 1; x <= se.x + 1; x++) {
+                for (let y = nw.y - 1; y <= se.y + 1; y++) {
+                    const bbox = tileToBBox(x, y, zoom);
+                    features.push({
+                        type: 'Feature',
+                        geometry: {
+                            type: 'LineString',
+                            coordinates: [
+                                [bbox.west, bbox.north],
+                                [bbox.east, bbox.north],
+                                [bbox.east, bbox.south],
+                                [bbox.west, bbox.south],
+                                [bbox.west, bbox.north]
+                            ]
+                        }
+                    });
+                }
+            }
+
+            map.getSource('tile-grid').setData({
+                type: 'FeatureCollection',
+                features: features
+            });
+        }
+
+        // Utility: Convert lon/lat to tile coordinates
+        function lonLatToTile(lon, lat, zoom) {
+            const x = Math.floor((lon + 180) / 360 * Math.pow(2, zoom));
+            const y = Math.floor((1 - Math.log(Math.tan(lat * Math.PI / 180) +
+                1 / Math.cos(lat * Math.PI / 180)) / Math.PI) / 2 * Math.pow(2, zoom));
+            return { x, y, z: zoom };
+        }
+
+        // Utility: Convert tile coordinates to bounding box
+        function tileToBBox(x, y, zoom) {
+            const n = Math.pow(2, zoom);
+            const west = x / n * 360 - 180;
+            const east = (x + 1) / n * 360 - 180;
+            const north = Math.atan(Math.sinh(Math.PI * (1 - 2 * y / n))) * 180 / Math.PI;
+            const south = Math.atan(Math.sinh(Math.PI * (1 - 2 * (y + 1) / n))) * 180 / Math.PI;
+            return { north, south, east, west };
+        }
+
+        // Setup event handlers
+        function setupEventHandlers() {
+            map.on('load', () => {
+                console.log('Map loaded');
+                updateInfo();
+            });
+
+            map.on('move', () => {
+                updateInfo();
+                if (gridVisible) updateGrid();
+            });
+
+            map.on('zoom', () => {
+                updateInfo();
+                if (gridVisible) updateGrid();
+            });
+
+            map.on('error', (e) => {
+                console.error('Map error:', e);
+                const banner = document.getElementById('error-banner');
+                banner.textContent = `Error: ${e.error.message}`;
+                banner.classList.add('visible');
+
+                setTimeout(() => {
+                    banner.classList.remove('visible');
+                }, 5000);
+            });
+
+            // Add navigation controls (zoom +/-, compass)
+            map.addControl(new maplibregl.NavigationControl(), 'bottom-right');
+
+            // Add scale control
+            map.addControl(new maplibregl.ScaleControl(), 'bottom-left');
+        }
+
+        // Async initialization: fetch style list and initial style, then create map
+        (async function init() {
+            const tileUrl = getTileUrl();
+            const baseUrl = getTilesBaseUrl(tileUrl);
+
+            await loadStyleList(baseUrl, 'light');
+
+            const styleName = document.getElementById('style-select').value || 'light';
+            let style;
+            try {
+                style = await fetchStyle(baseUrl, styleName, tileUrl);
+            } catch (e) {
+                console.error('Failed to load initial style:', e);
+                return;
+            }
+
+            map = new maplibregl.Map({
+                container: 'map',
+                style: style,
+                center: DEFAULT_CENTER,
+                zoom: DEFAULT_ZOOM
+            });
+
+            setupEventHandlers();
+
+            // Set dropdown to current browser language
+            document.getElementById('language-select').value = currentLanguage;
+
+            // Style change handler: fetch new style and apply dynamically
+            document.getElementById('style-select').addEventListener('change', async function(e) {
+                const newStyleName = e.target.value;
+                const currentTileUrl = getTileUrl();
+                const currentBaseUrl = getTilesBaseUrl(currentTileUrl);
+
+                let newStyle;
+                try {
+                    newStyle = await fetchStyle(currentBaseUrl, newStyleName, currentTileUrl);
+                } catch (err) {
+                    console.error('Failed to load style:', err);
+                    return;
+                }
+
+                map.once('style.load', () => {
+                    // Re-apply current language preference
+                    if (map.getLayer('country-names')) {
+                        map.setLayoutProperty('country-names', 'text-field', buildNameExpression(currentNameField));
+                    }
+                    updateInfo();
+                });
+                map.setStyle(newStyle);
+            });
+        })();
+
+        // Language change handler (no changes needed — already uses setLayoutProperty)
+        document.getElementById('language-select').addEventListener('change', function(e) {
+            const langCode = e.target.value;
+            const nameField = getNameField(langCode);
+
+            // Update the country-names layer text-field
+            if (map && map.getLayer('country-names')) {
+                map.setLayoutProperty('country-names', 'text-field', buildNameExpression(nameField));
+            }
+
+            currentLanguage = langCode;
+            currentNameField = nameField;
+        });
+    </script>
+</body>
+</html>

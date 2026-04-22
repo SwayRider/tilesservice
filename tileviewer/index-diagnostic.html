@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tileviewer Diagnostic</title>
+    <script src="https://unpkg.com/maplibre-gl@5.0.0/dist/maplibre-gl.js"></script>
+    <link href="https://unpkg.com/maplibre-gl@5.0.0/dist/maplibre-gl.css" rel="stylesheet" />
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+        #controls {
+            background: #2c3e50;
+            color: white;
+            padding: 15px;
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+        button {
+            padding: 8px 16px;
+            background: #3498db;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        button:hover {
+            background: #2980b9;
+        }
+        button:active {
+            background: #1f5f8b;
+        }
+        #map {
+            flex: 1;
+            position: relative;
+        }
+        #console {
+            height: 200px;
+            background: #1a1a1a;
+            color: #00ff00;
+            font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+            font-size: 12px;
+            overflow-y: auto;
+            padding: 10px;
+            border-top: 2px solid #3498db;
+        }
+        .log-entry {
+            margin: 2px 0;
+            padding: 2px 0;
+        }
+        .log-info { color: #00ff00; }
+        .log-warn { color: #ffaa00; }
+        .log-error { color: #ff3333; }
+        .log-request { color: #00aaff; }
+        .status {
+            padding: 8px 16px;
+            border-radius: 4px;
+            font-weight: bold;
+        }
+        .status.ok { background: #27ae60; }
+        .status.fail { background: #e74c3c; }
+        label {
+            font-size: 14px;
+        }
+        input[type="text"] {
+            padding: 6px 10px;
+            border: 1px solid #34495e;
+            border-radius: 4px;
+            font-size: 14px;
+            min-width: 300px;
+        }
+    </style>
+</head>
+<body>
+    <div id="controls">
+        <h3 style="margin-right: 20px;">Tileviewer Diagnostic</h3>
+        <button onclick="testPublicTiles()">Test 1: Public Tiles (OpenMapTiles)</button>
+        <button onclick="testTilesservice()">Test 2: Tilesservice Minimal</button>
+        <button onclick="testTileserviceDetailed()">Test 3: Tilesservice Detailed</button>
+        <button onclick="inspectSources()">Inspect Sources</button>
+        <button onclick="clearConsole()">Clear Console</button>
+        <span id="status" class="status">Ready</span>
+        <label>
+            Tilesservice URL:
+            <input type="text" id="tilesUrl" value="http://localhost:8080/v1/tiles/base" />
+        </label>
+    </div>
+    <div id="map"></div>
+    <div id="console"></div>
+
+    <script>
+        let map = null;
+        const consoleDiv = document.getElementById('console');
+        const statusDiv = document.getElementById('status');
+
+        // Logging functions
+        function log(message, type = 'info') {
+            const entry = document.createElement('div');
+            entry.className = `log-entry log-${type}`;
+            entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            consoleDiv.appendChild(entry);
+            consoleDiv.scrollTop = consoleDiv.scrollHeight;
+            console.log(message);
+        }
+
+        function clearConsole() {
+            consoleDiv.innerHTML = '';
+            log('Console cleared', 'info');
+        }
+
+        function setStatus(message, ok = true) {
+            statusDiv.textContent = message;
+            statusDiv.className = `status ${ok ? 'ok' : 'fail'}`;
+        }
+
+        // Intercept network requests
+        const originalFetch = window.fetch;
+        window.fetch = function(...args) {
+            const url = args[0];
+            if (typeof url === 'string' && (url.includes('/tiles/') || url.includes('.pbf'))) {
+                log(`FETCH REQUEST: ${url}`, 'request');
+            }
+            return originalFetch.apply(this, args)
+                .then(response => {
+                    if (typeof url === 'string' && (url.includes('/tiles/') || url.includes('.pbf'))) {
+                        log(`FETCH RESPONSE: ${url} - Status: ${response.status}`,
+                            response.ok ? 'info' : 'error');
+                    }
+                    return response;
+                })
+                .catch(error => {
+                    log(`FETCH ERROR: ${url} - ${error.message}`, 'error');
+                    throw error;
+                });
+        };
+
+        function destroyMap() {
+            if (map) {
+                log('Destroying existing map...', 'info');
+                map.remove();
+                map = null;
+            }
+        }
+
+        // Test 1: Public Tiles (OpenMapTiles Demo)
+        function testPublicTiles() {
+            destroyMap();
+            clearConsole();
+            log('=== TEST 1: Public Tiles (OpenMapTiles) ===', 'info');
+            log('Purpose: Verify MapLibre can request tiles from any source', 'info');
+
+            try {
+                map = new maplibregl.Map({
+                    container: 'map',
+                    style: 'https://demotiles.maplibre.org/style.json',
+                    center: [4.9, 52.37], // Amsterdam
+                    zoom: 10
+                });
+
+                map.on('load', () => {
+                    log('✓ Map loaded successfully', 'info');
+                    setStatus('Test 1: Map Loaded', true);
+                });
+
+                map.on('error', (e) => {
+                    log(`✗ Map error: ${e.error.message}`, 'error');
+                    setStatus('Test 1: Failed', false);
+                });
+
+                map.on('sourcedata', (e) => {
+                    if (e.isSourceLoaded && e.sourceId) {
+                        log(`✓ Source loaded: ${e.sourceId}`, 'info');
+                    }
+                });
+
+                map.on('data', (e) => {
+                    if (e.dataType === 'source') {
+                        log(`Data event: source=${e.sourceId}, loaded=${e.isSourceLoaded}`, 'info');
+                    }
+                });
+
+                log('Map initializing...', 'info');
+            } catch (error) {
+                log(`✗ Failed to initialize map: ${error.message}`, 'error');
+                setStatus('Test 1: Failed', false);
+            }
+        }
+
+        // Test 2: Tilesservice Minimal (single layer, no filters)
+        function testTilesservice() {
+            destroyMap();
+            clearConsole();
+            log('=== TEST 2: Tilesservice Minimal ===', 'info');
+            log('Purpose: Test basic connectivity to tilesservice', 'info');
+
+            const tilesUrl = document.getElementById('tilesUrl').value;
+            log(`Using tiles URL: ${tilesUrl}`, 'info');
+
+            try {
+                map = new maplibregl.Map({
+                    container: 'map',
+                    style: {
+                        version: 8,
+                        sources: {
+                            'swayrider': {
+                                type: 'vector',
+                                tiles: [`${tilesUrl}/{z}/{x}/{y}`],
+                                minzoom: 0,
+                                maxzoom: 16
+                            }
+                        },
+                        layers: [
+                            {
+                                id: 'background',
+                                type: 'background',
+                                paint: {
+                                    'background-color': '#f0f0f0'
+                                }
+                            },
+                            {
+                                id: 'test-fill',
+                                type: 'fill',
+                                source: 'swayrider',
+                                'source-layer': 'water', // Try common layer names
+                                paint: {
+                                    'fill-color': '#0066cc'
+                                }
+                            }
+                        ]
+                    },
+                    center: [4.9, 52.37],
+                    zoom: 8
+                });
+
+                map.on('load', () => {
+                    log('✓ Map loaded', 'info');
+                    setStatus('Test 2: Map Loaded', true);
+
+                    // Check if tiles are being requested
+                    setTimeout(() => {
+                        const source = map.getSource('swayrider');
+                        if (source) {
+                            log('Source exists in map', 'info');
+                        } else {
+                            log('✗ Source not found in map!', 'error');
+                        }
+                    }, 1000);
+                });
+
+                map.on('error', (e) => {
+                    log(`✗ Map error: ${JSON.stringify(e.error)}`, 'error');
+                    setStatus('Test 2: Failed', false);
+                });
+
+                map.on('sourcedata', (e) => {
+                    if (e.isSourceLoaded && e.sourceId === 'swayrider') {
+                        log(`✓ Source 'swayrider' loaded`, 'info');
+
+                        // Try to inspect tile data
+                        const source = map.getSource('swayrider');
+                        log(`Source type: ${source?.type}`, 'info');
+                    }
+                });
+
+                map.on('styleimagemissing', (e) => {
+                    log(`Image missing: ${e.id}`, 'warn');
+                });
+
+                log('Map initializing...', 'info');
+            } catch (error) {
+                log(`✗ Failed to initialize map: ${error.message}`, 'error');
+                setStatus('Test 2: Failed', false);
+            }
+        }
+
+        // Test 3: Tilesservice with multiple common layer names
+        function testTileserviceDetailed() {
+            destroyMap();
+            clearConsole();
+            log('=== TEST 3: Tilesservice Detailed ===', 'info');
+            log('Purpose: Test multiple source-layer names to find what exists', 'info');
+
+            const tilesUrl = document.getElementById('tilesUrl').value;
+            log(`Using tiles URL: ${tilesUrl}`, 'info');
+
+            // Common source-layer names used in vector tiles
+            const testLayers = [
+                { name: 'water', color: '#0066cc' },
+                { name: 'ocean', color: '#004488' },
+                { name: 'land', color: '#f0e8d8' },
+                { name: 'landcover', color: '#90c090' },
+                { name: 'roads', color: '#ff6666' },
+                { name: 'transportation', color: '#ff8866' },
+                { name: 'boundaries', color: '#666666' }
+            ];
+
+            try {
+                const layers = [
+                    {
+                        id: 'background',
+                        type: 'background',
+                        paint: { 'background-color': '#f0f0f0' }
+                    }
+                ];
+
+                // Add test layers for each source-layer name
+                testLayers.forEach((layer, index) => {
+                    layers.push({
+                        id: `test-${layer.name}`,
+                        type: 'fill',
+                        source: 'swayrider',
+                        'source-layer': layer.name,
+                        paint: {
+                            'fill-color': layer.color,
+                            'fill-opacity': 0.6
+                        },
+                        minzoom: 0
+                    });
+                });
+
+                map = new maplibregl.Map({
+                    container: 'map',
+                    style: {
+                        version: 8,
+                        sources: {
+                            'swayrider': {
+                                type: 'vector',
+                                tiles: [`${tilesUrl}/{z}/{x}/{y}`],
+                                minzoom: 0,
+                                maxzoom: 16
+                            }
+                        },
+                        layers: layers
+                    },
+                    center: [4.9, 52.37],
+                    zoom: 8
+                });
+
+                map.on('load', () => {
+                    log('✓ Map loaded', 'info');
+                    log(`Testing ${testLayers.length} source-layer names:`, 'info');
+                    testLayers.forEach(layer => {
+                        log(`  - ${layer.name}`, 'info');
+                    });
+                    setStatus('Test 3: Map Loaded', true);
+                });
+
+                map.on('error', (e) => {
+                    log(`✗ Map error: ${JSON.stringify(e.error)}`, 'error');
+                    setStatus('Test 3: Failed', false);
+                });
+
+                map.on('sourcedata', (e) => {
+                    if (e.isSourceLoaded && e.sourceId === 'swayrider') {
+                        log(`✓ Source data loaded`, 'info');
+                    }
+                });
+
+                log('Map initializing...', 'info');
+            } catch (error) {
+                log(`✗ Failed to initialize map: ${error.message}`, 'error');
+                setStatus('Test 3: Failed', false);
+            }
+        }
+
+        // Inspect loaded sources and layers
+        function inspectSources() {
+            if (!map) {
+                log('✗ No map loaded. Run a test first.', 'error');
+                return;
+            }
+
+            log('=== SOURCE INSPECTION ===', 'info');
+
+            const style = map.getStyle();
+
+            log(`Style version: ${style.version}`, 'info');
+            log(`Sources: ${Object.keys(style.sources).join(', ')}`, 'info');
+
+            Object.entries(style.sources).forEach(([name, source]) => {
+                log(`Source '${name}':`, 'info');
+                log(`  type: ${source.type}`, 'info');
+                if (source.tiles) {
+                    log(`  tiles: ${source.tiles[0]}`, 'info');
+                }
+                if (source.url) {
+                    log(`  url: ${source.url}`, 'info');
+                }
+            });
+
+            log(`Layers: ${style.layers.length} total`, 'info');
+            style.layers.forEach(layer => {
+                log(`  - ${layer.id} (type: ${layer.type}, source: ${layer.source || 'none'})`, 'info');
+                if (layer['source-layer']) {
+                    log(`    source-layer: ${layer['source-layer']}`, 'info');
+                }
+            });
+
+            // Try to query rendered features
+            const center = map.getCenter();
+            const features = map.queryRenderedFeatures();
+            log(`Rendered features at center: ${features.length}`, 'info');
+
+            if (features.length > 0) {
+                log('Sample features:', 'info');
+                features.slice(0, 5).forEach(feature => {
+                    log(`  - layer: ${feature.layer.id}, source-layer: ${feature.sourceLayer || 'none'}`, 'info');
+                    log(`    properties: ${Object.keys(feature.properties).join(', ')}`, 'info');
+                });
+            } else {
+                log('No features rendered (map might be empty or layers not matching)', 'warn');
+            }
+        }
+
+        // Initialize with first test
+        log('=== Tileviewer Diagnostic Tool ===', 'info');
+        log('This tool helps diagnose why tiles are not loading', 'info');
+        log('Click a test button above to begin', 'info');
+        log('', 'info');
+        log('Expected behavior:', 'info');
+        log('  1. Test 1 should show public OpenMapTiles', 'info');
+        log('  2. Test 2 should make requests to tilesservice', 'info');
+        log('  3. Test 3 should try multiple layer names', 'info');
+        log('  4. Inspect button shows loaded sources/layers', 'info');
+    </script>
+</body>
+</html>

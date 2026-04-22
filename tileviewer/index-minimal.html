@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tileviewer Minimal</title>
+    <script src="https://unpkg.com/maplibre-gl@5.0.0/dist/maplibre-gl.js"></script>
+    <link href="https://unpkg.com/maplibre-gl@5.0.0/dist/maplibre-gl.css" rel="stylesheet" />
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+        #header {
+            background: #2c3e50;
+            color: white;
+            padding: 10px 15px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        #info {
+            font-size: 13px;
+            font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+        }
+        #map {
+            flex: 1;
+        }
+        #console {
+            height: 150px;
+            background: #1a1a1a;
+            color: #00ff00;
+            font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+            font-size: 11px;
+            overflow-y: auto;
+            padding: 10px;
+            border-top: 2px solid #3498db;
+        }
+        .log-entry {
+            margin: 1px 0;
+        }
+        .log-info { color: #00ff00; }
+        .log-warn { color: #ffaa00; }
+        .log-error { color: #ff3333; }
+        .log-request { color: #00aaff; }
+    </style>
+</head>
+<body>
+    <div id="header">
+        <h2>Tileviewer Minimal</h2>
+        <div id="info">Loading...</div>
+    </div>
+    <div id="map"></div>
+    <div id="console"></div>
+
+    <script>
+        const consoleDiv = document.getElementById('console');
+        const infoDiv = document.getElementById('info');
+
+        // Logging
+        function log(message, type = 'info') {
+            const entry = document.createElement('div');
+            entry.className = `log-entry log-${type}`;
+            entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            consoleDiv.appendChild(entry);
+            consoleDiv.scrollTop = consoleDiv.scrollHeight;
+            console.log(message);
+        }
+
+        // Intercept tile requests
+        const originalFetch = window.fetch;
+        window.fetch = function(...args) {
+            const url = args[0];
+            if (typeof url === 'string' && url.includes('/tiles/')) {
+                log(`→ ${url}`, 'request');
+            }
+            return originalFetch.apply(this, args)
+                .then(response => {
+                    if (typeof url === 'string' && url.includes('/tiles/')) {
+                        log(`← ${response.status} ${response.statusText}`,
+                            response.ok ? 'info' : 'error');
+                    }
+                    return response;
+                })
+                .catch(error => {
+                    if (typeof url === 'string' && url.includes('/tiles/')) {
+                        log(`✗ ${error.message}`, 'error');
+                    }
+                    throw error;
+                });
+        };
+
+        log('=== Minimal Tileviewer ===', 'info');
+        log('Initializing map with basic configuration...', 'info');
+
+        // Initialize map
+        const map = new maplibregl.Map({
+            container: 'map',
+            style: {
+                version: 8,
+                sources: {
+                    'swayrider-tiles': {
+                        type: 'vector',
+                        tiles: ['http://localhost:8080/v1/tiles/base/{z}/{x}/{y}'],
+                        minzoom: 0,
+                        maxzoom: 16
+                    }
+                },
+                layers: [
+                    // Background layer (always renders)
+                    {
+                        id: 'background',
+                        type: 'background',
+                        paint: {
+                            'background-color': '#f8f4f0'
+                        }
+                    },
+                    // Ocean layer (L0 - zoom 0-6)
+                    {
+                        id: 'ocean',
+                        type: 'fill',
+                        source: 'swayrider-tiles',
+                        'source-layer': 'ocean',
+                        paint: {
+                            'fill-color': '#a0c8e8'
+                        }
+                    },
+                    // Water layer (L1-L3 - zoom 7+)
+                    {
+                        id: 'water',
+                        type: 'fill',
+                        source: 'swayrider-tiles',
+                        'source-layer': 'water',
+                        paint: {
+                            'fill-color': '#8ab4d8'
+                        },
+                        minzoom: 7
+                    },
+                    // Roads layer (simplified)
+                    {
+                        id: 'roads',
+                        type: 'line',
+                        source: 'swayrider-tiles',
+                        'source-layer': 'roads',
+                        paint: {
+                            'line-color': '#ffffff',
+                            'line-width': [
+                                'interpolate',
+                                ['exponential', 1.5],
+                                ['zoom'],
+                                8, 0.5,
+                                16, 8
+                            ]
+                        },
+                        minzoom: 8
+                    }
+                ]
+            },
+            center: [4.9, 52.37], // Amsterdam
+            zoom: 8
+        });
+
+        // Event handlers
+        map.on('load', () => {
+            log('✓ Map loaded successfully', 'info');
+            log('Waiting for tiles...', 'info');
+            updateInfo();
+        });
+
+        map.on('error', (e) => {
+            log(`✗ Map error: ${e.error.message}`, 'error');
+            if (e.error.stack) {
+                log(`  ${e.error.stack}`, 'error');
+            }
+        });
+
+        map.on('sourcedata', (e) => {
+            if (e.isSourceLoaded && e.sourceId === 'swayrider-tiles') {
+                log(`✓ Source 'swayrider-tiles' loaded`, 'info');
+            }
+        });
+
+        map.on('data', (e) => {
+            if (e.dataType === 'source' && e.sourceId === 'swayrider-tiles') {
+                log(`Data event: source=${e.sourceId}, loaded=${e.isSourceLoaded}`, 'info');
+            }
+        });
+
+        map.on('styledata', () => {
+            log('Style data loaded', 'info');
+        });
+
+        map.on('idle', () => {
+            // Map is idle, check what rendered
+            const features = map.queryRenderedFeatures();
+            if (features.length > 0) {
+                const uniqueLayers = [...new Set(features.map(f => f.layer.id))];
+                log(`✓ Rendered ${features.length} features on layers: ${uniqueLayers.join(', ')}`, 'info');
+            }
+        });
+
+        // Update info display on move/zoom
+        function updateInfo() {
+            const center = map.getCenter();
+            const zoom = map.getZoom();
+            const tileCoord = lonLatToTile(center.lng, center.lat, Math.floor(zoom));
+
+            infoDiv.textContent =
+                `Zoom: ${zoom.toFixed(2)} | ` +
+                `Center: ${center.lat.toFixed(4)}, ${center.lng.toFixed(4)} | ` +
+                `Tile: ${tileCoord.z}/${tileCoord.x}/${tileCoord.y}`;
+        }
+
+        map.on('move', updateInfo);
+        map.on('zoom', updateInfo);
+
+        // Utility: Convert lon/lat to tile coordinates
+        function lonLatToTile(lon, lat, zoom) {
+            const x = Math.floor((lon + 180) / 360 * Math.pow(2, zoom));
+            const y = Math.floor((1 - Math.log(Math.tan(lat * Math.PI / 180) +
+                1 / Math.cos(lat * Math.PI / 180)) / Math.PI) / 2 * Math.pow(2, zoom));
+            return { x, y, z: zoom };
+        }
+
+        // Add navigation controls
+        map.addControl(new maplibregl.NavigationControl());
+
+        log('Map initialization complete', 'info');
+        log('', 'info');
+        log('Expected behavior:', 'info');
+        log('  - Background should be visible (beige color)', 'info');
+        log('  - HTTP requests should appear above when you pan/zoom', 'info');
+        log('  - Ocean/water should be blue (if tiles load)', 'info');
+        log('  - Roads should be white lines (zoom 8+)', 'info');
+    </script>
+</body>
+</html>
