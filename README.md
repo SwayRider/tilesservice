@@ -4,37 +4,65 @@ Vector tile serving service for the SwayRider platform. Serves Mapbox Vector Til
 
 ## Architecture
 
-The tilesservice exposes two server interfaces:
+The tilesservice exposes an HTTP API for tile serving:
 
 | Interface | Port | Purpose |
 | --------- | ---- | ------- |
-| REST/HTTP | 8080 | HTTP API via gRPC-gateway |
-| gRPC | 8081 | Internal service-to-service communication |
+| HTTP | 8080 | REST API for tiles and styles |
 
 ### Tile Storage
 
 The service reads tiles from MBTiles files organized in a hierarchical structure based on zoom levels and geographic regions.
 
+### Caching
+
+The service implements optional two-tier caching:
+
+1. **Memory cache**: Compressed tiles cached in memory
+2. **Disk cache**: Persistent file-based cache for tile data
+
 ## Configuration
 
-Configuration is provided via environment variables or CLI flags.
+Configuration is provided via environment variables or CLI flags. See `env.example` for the full configuration.
 
 ### Server Configuration
 
 | Environment Variable | CLI Flag | Default | Description |
 | -------------------- | -------- | ------- | ----------- |
-| `HTTP_PORT` | `-http-port` | 8080 | REST API port |
-| `GRPC_PORT` | `-grpc-port` | 8081 | gRPC port |
+| `HTTP_PORT` | `-http-port` | 8080 | HTTP API port |
+| `LOG_LEVEL` | `-log-level` | info | Logging level (debug, info, warn, error) |
 
 ### Tiles Configuration
 
 | Environment Variable | CLI Flag | Default | Description |
 | -------------------- | -------- | ------- | ----------- |
-| `TILES_PATH` | `-tiles-path` | | Path to the tiles storage directory |
+| `TILES_PATH` | `-tiles-path` | | Path to the tiles storage directory (required) |
+| `STYLES_PATH` | `-styles-path` | | Path to the map styles directory |
+
+### Compression Settings
+
+| Environment Variable | CLI Flag | Default | Description |
+| -------------------- | -------- | ------- | ----------- |
+| `COMPRESSION_ENABLED` | `-compression-enabled` | true | Enable HTTP gzip compression |
+| `COMPRESSION_CACHE_SIZE` | `-compression-cache-size` | 1000 | Max compressed tiles in memory |
+
+### Disk Cache Settings
+
+| Environment Variable | CLI Flag | Default | Description |
+| -------------------- | -------- | ------- | ----------- |
+| `DISK_CACHE_ENABLED` | `-disk-cache-enabled` | false | Enable persistent disk cache |
+| `DISK_CACHE_PATH` | `-disk-cache-path` | | Path to disk cache directory |
+| `DISK_CACHE_MAX_FILES` | `-disk-cache-max-files` | 100000 | Max files in disk cache |
+
+### Public Service URL
+
+| Environment Variable | CLI Flag | Default | Description |
+| -------------------- | -------- | ------- | ----------- |
+| `SERVICE_HOST` | `-service-host` | | Public hostname (used in style tile URLs) |
+| `SERVICE_PORT` | `-service-port` | | Public port (optional) |
+| `SERVICE_PREFIX` | `-service-prefix` | | URL prefix (e.g. /v1/tiles) |
 
 ## API Reference
-
-The API is defined in the Protocol Buffer files at `backend/protos/tiles/v1/`.
 
 All endpoints are public and require no authentication.
 
@@ -42,9 +70,43 @@ All endpoints are public and require no authentication.
 
 ### Ping
 
-Simple health check that returns HTTP 200.
+Health check endpoint that returns HTTP 200.
 
 - **Endpoint:** `GET /v1/tiles/ping`
+- **Access:** Public
+
+**Response:**
+
+```json
+{"status":"ok"}
+```
+
+---
+
+### Get Style
+
+Retrieves style definition for a named style.
+
+- **Endpoint:** `GET /v1/tiles/styles/{name}`
+- **Access:** Public
+
+**Parameters:**
+
+| Parameter | Type | Description |
+| --------- | ---- | ----------- |
+| `name` | string | Style name (e.g., "light", "dark") |
+
+**Response:**
+
+Returns the map style JSON definition.
+
+---
+
+### List Styles
+
+Lists available style names.
+
+- **Endpoint:** `GET /v1/tiles/styles`
 - **Access:** Public
 
 ---
@@ -73,6 +135,8 @@ Returns the vector tile data in MVT (Mapbox Vector Tile) format.
 curl --request GET \
   --url http://localhost:8080/v1/tiles/base/10/512/384
 ```
+
+---
 
 ## Tiles Data Structure
 
@@ -120,39 +184,34 @@ Files in L1, L2, and L3 follow the naming pattern: `{lat}_{lon}.mbtiles`
 ## Building
 
 ```bash
-# Generate protobuf code (run from repo root)
-make proto
-
 # Build the service
-cd backend
-go build ./services/tilesservice/cmd/tilesservice
+go build ./cmd/tilesservice
 
 # Run the service
-go run ./services/tilesservice/cmd/tilesservice
+go run ./cmd/tilesservice
 ```
 
 ## Docker
 
 ```bash
-# Build container (from repo root)
-make services-tilesservice-container
+# Build container
+docker build -t tilesservice .
 ```
 
 ## Development
 
-For local development:
-
-1. Create the tiles directory structure
-2. Copy or generate MBTiles files into the appropriate locations
-3. Set `TILES_PATH` in your `.env` file
-4. Run the service
+Copy the example configuration and adjust as needed:
 
 ```bash
-cd backend/services/tilesservice
+cp env.example .env
+# Edit .env with your paths
+```
+
+Run the service:
+
+```bash
 source .env
 go run ./cmd/tilesservice
 ```
 
-Development ports:
-- REST API: 8080
-- gRPC: 8081
+Development port: HTTP API on 8080
