@@ -35,10 +35,10 @@ RUN if [ "${TARGETARCH}" = "amd64" ]; then \
     go build -o tilesservice ./cmd/tilesservice/main.go
 
 # Runtime stage
-FROM debian:bookworm-slim
+FROM --platform=$TARGETPLATFORM debian:bookworm-slim
 WORKDIR /app
 COPY --from=builder /app/tilesservice .
-COPY assets/map/styles ./assets/map/styles
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+COPY --from=builder /app/assets/map/styles ./assets/map/styles
 ENV STYLES_PATH=/app/assets/map/styles
-RUN apt-get update && apt-get install -y ca-certificates
 CMD ["./tilesservice"]
