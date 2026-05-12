@@ -12,23 +12,36 @@ DATE_TAG       := $(shell date +%Y%m%d)
 SHORT_SHA      := $(shell git rev-parse --short HEAD 2>/dev/null)
 SAFE_BRANCH    := $(shell echo "$(CURRENT_BRANCH)" | sed 's|/|-|g; s|[^a-zA-Z0-9-]|-|g')
 
+FORCE_DEV_LATEST ?=
+
 ifneq ($(VERSION_TAG),)
   BASE_TAG     := $(VERSION_TAG)
   FLOATING_TAG := latest
+  ifeq ($(FORCE_DEV_LATEST),1)
+    EXTRA_TAG := dev-latest
+  else
+    EXTRA_TAG :=
+  endif
 else ifeq ($(CURRENT_BRANCH),main)
   BASE_TAG     := $(LAST_VERSION)-$(DATE_TAG)-dev
   FLOATING_TAG := dev-latest
+  EXTRA_TAG    :=
 else ifneq ($(CURRENT_BRANCH),)
   BASE_TAG     := $(LAST_VERSION)-$(SAFE_BRANCH)
   FLOATING_TAG :=
+  EXTRA_TAG    :=
 else
   BASE_TAG     := $(LAST_VERSION)-$(SHORT_SHA)
   FLOATING_TAG :=
+  EXTRA_TAG    :=
 endif
 
 TAGS := -t $(IMAGE):$(BASE_TAG)
 ifneq ($(FLOATING_TAG),)
   TAGS := $(TAGS) -t $(IMAGE):$(FLOATING_TAG)
+endif
+ifneq ($(EXTRA_TAG),)
+  TAGS := $(TAGS) -t $(IMAGE):$(EXTRA_TAG)
 endif
 
 .PHONY: container-build
@@ -36,7 +49,7 @@ endif
 all: container-build
 
 container-build:
-	@echo "Building $(IMAGE):$(BASE_TAG)$(if $(FLOATING_TAG), [+$(FLOATING_TAG)])"
+	@echo "Building $(IMAGE):$(BASE_TAG)$(if $(FLOATING_TAG), [+$(FLOATING_TAG)])$(if $(EXTRA_TAG), [+$(EXTRA_TAG)])"
 	docker buildx build \
 		-f Dockerfile \
 		--network=host \
