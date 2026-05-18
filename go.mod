@@ -6,7 +6,7 @@ require (
 	github.com/mattn/go-sqlite3 v1.14.42
 	github.com/paulmach/orb v0.13.0
 	github.com/rs/cors v1.11.1
-	github.com/swayrider/swlib v0.1.2-0.20260513190938-e9124987785d
+	github.com/swayrider/swlib v0.1.2
 )
 
 require (

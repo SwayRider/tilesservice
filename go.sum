@@ -199,6 +199,8 @@ github.com/swayrider/swlib v0.1.0 h1:0orQGgLn1nv1//AHoLZeiFes/jmLFeB35tE7aXUA3bs
 github.com/swayrider/swlib v0.1.0/go.mod h1:QOfGrFPaX2S9TjfnbJ5I0/IyyTrYKLqIpfUnj/HG4yE=
 github.com/swayrider/swlib v0.1.2-0.20260513190938-e9124987785d h1:TPqQ9RN7mNHdwrFfFxte4urbW8cO6DF1Ot3SNQrgyx8=
 github.com/swayrider/swlib v0.1.2-0.20260513190938-e9124987785d/go.mod h1:mSScpgfHXCO2K+NTCxRHA+ZPsrEJF4FGRUVU1WPLKn8=
+github.com/swayrider/swlib v0.1.2 h1:XPexKJT+dI+Tt92DZ6lFMFMqKW2G3o8zcOJelEVox7E=
+github.com/swayrider/swlib v0.1.2/go.mod h1:mSScpgfHXCO2K+NTCxRHA+ZPsrEJF4FGRUVU1WPLKn8=
 github.com/tv42/httpunix v0.0.0-20150427012821-b75d8614f926/go.mod h1:9ESjWnEqriFuLhtthL60Sar/7RFoluCcXsuvEwTV5KM=
 github.com/yuin/goldmark v1.1.27/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9decYSb74=
 github.com/yuin/goldmark v1.2.1/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9decYSb74=
