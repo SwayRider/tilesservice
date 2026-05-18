@@ -190,10 +190,15 @@ github.com/stretchr/testify v1.3.0/go.mod h1:M5WIy9Dh21IEIfnGCwXGc5bZfKNJtfHm1UV
 github.com/stretchr/testify v1.4.0/go.mod h1:j7eGeouHqKxXV5pUuKE4zz7dFj8WfuZ+81PSLYec5m4=
 github.com/stretchr/testify v1.7.2/go.mod h1:R6va5+xMeoiuVRoj+gSkQ7d3FALtqAAGI1FQKckRals=
 github.com/stretchr/testify v1.11.1 h1:7s2iGBzp5EwR7/aIZr8ao5+dra3wiQyKjjFuvgVKu7U=
+github.com/stretchr/testify v1.11.1/go.mod h1:wZwfW3scLgRK+23gO65QZefKpKQRnfz6sD981Nm4B6U=
 github.com/swayrider/grpcclients v0.1.0 h1:W92mr8GKNSiRUNA7Qu9cWBZblwhnMOpz95IJtYsZfZ4=
 github.com/swayrider/grpcclients v0.1.0/go.mod h1:0C831JcXQ6H4mK4RUu7bk9CdtOBz6g9ggILvn2YYKoE=
+github.com/swayrider/grpcclients v0.1.1 h1:2daCng6gPClEwOwKNVqEI2SKozOV5hZf1FsSrAmYRus=
+github.com/swayrider/grpcclients v0.1.1/go.mod h1:BGZGu7XPZFu9vz3J1MbyUrkVGNUHgr9q2/KXMd9s8SU=
 github.com/swayrider/swlib v0.1.0 h1:0orQGgLn1nv1//AHoLZeiFes/jmLFeB35tE7aXUA3bs=
 github.com/swayrider/swlib v0.1.0/go.mod h1:QOfGrFPaX2S9TjfnbJ5I0/IyyTrYKLqIpfUnj/HG4yE=
+github.com/swayrider/swlib v0.1.2-0.20260513190938-e9124987785d h1:TPqQ9RN7mNHdwrFfFxte4urbW8cO6DF1Ot3SNQrgyx8=
+github.com/swayrider/swlib v0.1.2-0.20260513190938-e9124987785d/go.mod h1:mSScpgfHXCO2K+NTCxRHA+ZPsrEJF4FGRUVU1WPLKn8=
 github.com/tv42/httpunix v0.0.0-20150427012821-b75d8614f926/go.mod h1:9ESjWnEqriFuLhtthL60Sar/7RFoluCcXsuvEwTV5KM=
 github.com/yuin/goldmark v1.1.27/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9decYSb74=
 github.com/yuin/goldmark v1.2.1/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9decYSb74=
