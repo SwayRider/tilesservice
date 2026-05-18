@@ -21,6 +21,21 @@ The service implements optional two-tier caching:
 1. **Memory cache**: Compressed tiles cached in memory
 2. **Disk cache**: Persistent file-based cache for tile data
 
+## Authorization
+
+tilesservice only accepts **service client tokens** with the `tiles:serve` scope. Direct user JWT access is not permitted — all client requests must go through swayrider-api, which injects its own service token.
+
+| HTTP endpoint | Access |
+|---|---|
+| `GET /v1/tiles/ping` | Public — no token required |
+| `GET /v1/tiles/styles` | Service client token with `tiles:serve` scope |
+| `GET /v1/tiles/styles/{name}` | Service client token with `tiles:serve` scope |
+| `GET /v1/tiles/{tileset}/{z}/{x}/{y}` | Service client token with `tiles:serve` scope |
+
+AUTHSERVICE_HOST and AUTHSERVICE_PORT must be configured so the service can fetch JWT public keys for token validation.
+
+---
+
 ## Configuration
 
 Configuration is provided via environment variables or CLI flags. See `env.example` for the full configuration.

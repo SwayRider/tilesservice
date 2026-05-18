@@ -6,7 +6,8 @@ require (
 	github.com/mattn/go-sqlite3 v1.14.42
 	github.com/paulmach/orb v0.13.0
 	github.com/rs/cors v1.11.1
-	github.com/swayrider/swlib v0.1.2
+	github.com/swayrider/grpcclients v0.1.3-0.20260518181715-c2f5bc7bcfa0
+	github.com/swayrider/swlib v0.1.3-0.20260518180339-c5ea61ce8631
 )
 
 require (
@@ -32,7 +33,6 @@ require (
 	github.com/mitchellh/mapstructure v1.5.0 // indirect
 	github.com/paulmach/protoscan v0.2.1 // indirect
 	github.com/stretchr/testify v1.11.1 // indirect
-	github.com/swayrider/grpcclients v0.1.1 // indirect
 	go.mongodb.org/mongo-driver/v2 v2.5.0 // indirect
 	golang.org/x/exp v0.0.0-20250305212735-054e65f0b394 // indirect
 	golang.org/x/net v0.49.0 // indirect
