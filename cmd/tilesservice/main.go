@@ -17,13 +17,16 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/rs/cors"
+	"github.com/swayrider/grpcclients/authclient"
 	"github.com/swayrider/tilesservice/internal/server"
 	"github.com/swayrider/tilesservice/internal/tilecache"
 	"github.com/swayrider/tilesservice/internal/tileindex"
 	"github.com/swayrider/swlib/app"
+	"github.com/swayrider/swlib/jwt"
 	log "github.com/swayrider/swlib/logger"
 )
 
@@ -95,10 +98,93 @@ const (
 	FldServicePrefix = "service-prefix" // CLI flag name for the URL prefix appended after host:port
 	EnvServicePrefix = "SERVICE_PREFIX" // Environment variable name for the URL prefix
 	DefServicePrefix = ""               // Default service prefix (empty)
+
+	FldAuthServiceHost = "authservice-host" // CLI flag name for auth service host
+	EnvAuthServiceHost = "AUTHSERVICE_HOST" // Environment variable name for auth service host
+	DefAuthServiceHost = ""                 // Default auth service host (empty)
+	FldAuthServicePort = "authservice-port" // CLI flag name for auth service gRPC port
+	EnvAuthServicePort = "AUTHSERVICE_PORT" // Environment variable name for auth service gRPC port
+	DefAuthServicePort = 8081               // Default auth service gRPC port
 )
 
 // httpServer holds the HTTP server instance for graceful shutdown.
 var httpServer *http.Server
+
+// jwtKeyCache caches the public keys fetched from authservice for JWT validation.
+var jwtKeyCache struct {
+	mu   sync.RWMutex
+	keys []string
+}
+
+// refreshJWTKeys fetches fresh public keys from authservice and stores them in jwtKeyCache.
+func refreshJWTKeys(clt *authclient.Client, lg *log.Logger) {
+	keys, err := clt.PublicKeys()
+	if err != nil {
+		lg.Warnf("failed to refresh JWT public keys: %v", err)
+		return
+	}
+	jwtKeyCache.mu.Lock()
+	jwtKeyCache.keys = keys
+	jwtKeyCache.mu.Unlock()
+}
+
+// requireTilesAuth is an HTTP middleware that validates a JWT and enforces the
+// "tiles:serve" scope for service clients. Regular user JWTs are accepted as-is.
+func requireTilesAuth(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auth := r.Header.Get("Authorization")
+		if !strings.HasPrefix(auth, "Bearer ") {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		token := strings.TrimPrefix(auth, "Bearer ")
+
+		jwtKeyCache.mu.RLock()
+		keys := make([]string, len(jwtKeyCache.keys))
+		copy(keys, jwtKeyCache.keys)
+		jwtKeyCache.mu.RUnlock()
+
+		if len(keys) == 0 {
+			http.Error(w, "service unavailable: no JWT keys loaded", http.StatusServiceUnavailable)
+			return
+		}
+
+		var (
+			claims  *jwt.Claims
+			lastErr error
+		)
+		for _, key := range keys {
+			claims, lastErr = jwt.VerifyToken(token, key, jwt.VerifyDefault)
+			if lastErr == nil {
+				break
+			}
+		}
+		if lastErr != nil {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		// Only service client tokens with the tiles:serve scope are accepted.
+		// User JWTs must go through swayrider-api, which injects the service token.
+		svcClaims, ok := claims.SwayRiderClaims.(*jwt.SwayRiderServiceClaims)
+		if !ok || !hasTilesScope(svcClaims.Scopes) {
+			http.Error(w, "forbidden: missing tiles:serve scope", http.StatusForbidden)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+func hasTilesScope(scopes []string) bool {
+	for _, s := range scopes {
+		if s == "tiles:serve" {
+			return true
+		}
+	}
+	return false
+}
+
 
 func main() {
 	stdConfigFields :=
@@ -128,6 +214,10 @@ func main() {
 				FldServicePort, EnvServicePort, "Public port of the tiles service (optional, omit for standard ports)", DefServicePort),
 			app.NewStringConfigField(
 				FldServicePrefix, EnvServicePrefix, "URL prefix appended after host:port (e.g. /v1/tiles)", DefServicePrefix),
+			app.NewStringConfigField(
+				FldAuthServiceHost, EnvAuthServiceHost, "Auth service host for JWT public key discovery", DefAuthServiceHost),
+			app.NewIntConfigField(
+				FldAuthServicePort, EnvAuthServicePort, "Auth service gRPC port for JWT public key discovery", DefAuthServicePort),
 		).
 		WithInitializers(initializeTileIndex).
 		WithHTTP(startHTTPServer, stopHTTPServer)
@@ -237,27 +327,43 @@ func startHTTPServer(a app.App) error {
 		lg.Warnln("SERVICE_HOST not configured, style tile URLs will be empty")
 	}
 
+	// JWT key cache — connect to authservice and start periodic refresh.
+	authHost := app.GetConfigField[string](a.Config(), FldAuthServiceHost)
+	authPort := app.GetConfigField[int](a.Config(), FldAuthServicePort)
+	authCltIface, err := authclient.New(func() (string, int) { return authHost, authPort })
+	if err != nil {
+		lg.Fatalf("authclient: %v", err)
+	}
+	authClt := authCltIface.(*authclient.Client)
+	refreshJWTKeys(authClt, lg)
+	go func() {
+		t := time.NewTicker(time.Hour)
+		defer t.Stop()
+		for range t.C {
+			refreshJWTKeys(authClt, lg)
+		}
+	}()
+
 	// Create HTTP handlers
 	mux := http.NewServeMux()
 
-	// Health check endpoint
+	// Health check endpoint — public, no auth.
 	mux.HandleFunc("GET /v1/tiles/ping", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(`{"status":"ok"}`))
 	})
 
-	// Style endpoints — registered before the tile wildcard route to ensure the
-	// static /v1/tiles/styles prefix takes priority. There is no routing conflict:
-	// /v1/tiles/styles has 3 segments and /v1/tiles/styles/{name} has 4 segments,
-	// while the tile route /v1/tiles/{tileset}/{z}/{x}/{y} requires exactly 6.
+	// Style endpoints — require JWT with tiles:serve scope (or user JWT).
+	// Registered before the tile wildcard route to ensure the static
+	// /v1/tiles/styles prefix takes priority.
 	styleHandler := server.NewStyleHTTPHandler(stylesPath, tilesBaseURL, a.Logger())
-	mux.Handle("GET /v1/tiles/styles", styleHandler)
-	mux.Handle("GET /v1/tiles/styles/{name}", styleHandler)
+	mux.Handle("GET /v1/tiles/styles", requireTilesAuth(styleHandler))
+	mux.Handle("GET /v1/tiles/styles/{name}", requireTilesAuth(styleHandler))
 
-	// Tile endpoint with cache (interface)
+	// Tile endpoint — requires JWT with tiles:serve scope (or user JWT).
 	tileHandler := server.NewTileHTTPHandler(idx, tileCache, a.Logger())
-	mux.Handle("GET /v1/tiles/{tileset}/{z}/{x}/{y}", tileHandler)
+	mux.Handle("GET /v1/tiles/{tileset}/{z}/{x}/{y}", requireTilesAuth(tileHandler))
 
 	// CORS middleware - allow all origins for development
 	handler := cors.New(cors.Options{
