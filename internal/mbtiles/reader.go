@@ -46,7 +46,7 @@ func Open(path string) (*Reader, error) {
 	var name string
 	err = db.QueryRow("SELECT name FROM sqlite_master WHERE type IN ('table', 'view') AND name='tiles'").Scan(&name)
 	if err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("invalid mbtiles file (no tiles table): %w", err)
 	}
 

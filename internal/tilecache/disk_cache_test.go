@@ -15,7 +15,7 @@ func TestDiskTileCache_GetSet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create cache: %v", err)
 	}
-	defer cache.Close()
+	defer func() { _ = cache.Close() }()
 
 	// Write tile
 	testData := []byte("test tile data")
@@ -51,7 +51,7 @@ func TestDiskTileCache_CacheMiss(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create cache: %v", err)
 	}
-	defer cache.Close()
+	defer func() { _ = cache.Close() }()
 
 	// Try to get non-existent tile
 	_, ok := cache.Get(7, 68, 34)
@@ -68,13 +68,13 @@ func TestDiskTileCache_DirectoryCreation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create cache: %v", err)
 	}
-	defer cache.Close()
+	defer func() { _ = cache.Close() }()
 
 	// Write tile at different zoom levels
 	testData := []byte("test")
-	cache.SetAsync(0, 0, 0, testData)
-	cache.SetAsync(7, 68, 34, testData)
-	cache.SetAsync(14, 8500, 5700, testData)
+	_ = cache.SetAsync(0, 0, 0, testData)
+	_ = cache.SetAsync(7, 68, 34, testData)
+	_ = cache.SetAsync(14, 8500, 5700, testData)
 
 	// Wait for async writes
 	time.Sleep(100 * time.Millisecond)
@@ -101,7 +101,7 @@ func TestDiskTileCache_MetadataConsistency(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create cache: %v", err)
 	}
-	defer cache.Close()
+	defer func() { _ = cache.Close() }()
 
 	// Write multiple tiles
 	tiles := []struct{ z, x, y uint32 }{
@@ -111,7 +111,7 @@ func TestDiskTileCache_MetadataConsistency(t *testing.T) {
 	}
 
 	for _, tile := range tiles {
-		cache.SetAsync(tile.z, tile.x, tile.y, []byte("data"))
+		_ = cache.SetAsync(tile.z, tile.x, tile.y, []byte("data"))
 	}
 
 	// Wait for async writes
@@ -145,10 +145,10 @@ func TestDiskTileCache_AccessTimeUpdate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create cache: %v", err)
 	}
-	defer cache.Close()
+	defer func() { _ = cache.Close() }()
 
 	// Write tile
-	cache.SetAsync(7, 68, 34, []byte("test"))
+	_ = cache.SetAsync(7, 68, 34, []byte("test"))
 	time.Sleep(100 * time.Millisecond)
 
 	// Get initial access time directly from DB
@@ -205,11 +205,11 @@ func TestDiskTileCache_Eviction(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create cache: %v", err)
 	}
-	defer cache.Close()
+	defer func() { _ = cache.Close() }()
 
 	// Write 5 tiles (exceeds limit of 3)
 	for i := 0; i < 5; i++ {
-		cache.SetAsync(7, 68, uint32(i), []byte("data"))
+		_ = cache.SetAsync(7, 68, uint32(i), []byte("data"))
 	}
 
 	// Wait for writes and eviction
@@ -234,14 +234,14 @@ func TestDiskTileCache_ConcurrentAccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create cache: %v", err)
 	}
-	defer cache.Close()
+	defer func() { _ = cache.Close() }()
 
 	// Concurrent writes
 	done := make(chan bool)
 	for i := 0; i < 10; i++ {
 		go func(n int) {
 			for j := 0; j < 10; j++ {
-				cache.SetAsync(7, uint32(n), uint32(j), []byte("data"))
+				_ = cache.SetAsync(7, uint32(n), uint32(j), []byte("data"))
 			}
 			done <- true
 		}(i)
@@ -275,7 +275,7 @@ func TestDiskTileCache_GracefulShutdown(t *testing.T) {
 
 	// Queue many writes
 	for i := 0; i < 50; i++ {
-		cache.SetAsync(7, 68, uint32(i), []byte("data"))
+		_ = cache.SetAsync(7, 68, uint32(i), []byte("data"))
 	}
 
 	// Close immediately (should wait for writes)
@@ -302,7 +302,7 @@ func TestDiskTileCache_WriteQueueFull(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create cache: %v", err)
 	}
-	defer cache.Close()
+	defer func() { _ = cache.Close() }()
 
 	// Fill the write queue (buffer size is 1000)
 	// Write more than buffer to test queue full error
@@ -327,10 +327,10 @@ func TestDiskTileCache_CorruptedFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create cache: %v", err)
 	}
-	defer cache.Close()
+	defer func() { _ = cache.Close() }()
 
 	// Write a valid tile
-	cache.SetAsync(7, 68, 34, []byte("valid data"))
+	_ = cache.SetAsync(7, 68, 34, []byte("valid data"))
 	time.Sleep(100 * time.Millisecond)
 
 	// Corrupt the file by writing invalid data directly
@@ -359,7 +359,7 @@ func TestDiskTileCache_EmptyCache(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create cache: %v", err)
 	}
-	defer cache.Close()
+	defer func() { _ = cache.Close() }()
 
 	// Try to get from empty cache
 	if _, ok := cache.Get(7, 68, 34); ok {
@@ -384,10 +384,10 @@ func TestDiskTileCache_OverwriteExisting(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create cache: %v", err)
 	}
-	defer cache.Close()
+	defer func() { _ = cache.Close() }()
 
 	// Write original data
-	cache.SetAsync(7, 68, 34, []byte("original"))
+	_ = cache.SetAsync(7, 68, 34, []byte("original"))
 	time.Sleep(100 * time.Millisecond)
 
 	// Verify original data
@@ -397,7 +397,7 @@ func TestDiskTileCache_OverwriteExisting(t *testing.T) {
 	}
 
 	// Overwrite with new data
-	cache.SetAsync(7, 68, 34, []byte("updated"))
+	_ = cache.SetAsync(7, 68, 34, []byte("updated"))
 	time.Sleep(100 * time.Millisecond)
 
 	// Verify updated data
@@ -430,10 +430,10 @@ func TestDiskTileCache_ZeroMaxFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create cache: %v", err)
 	}
-	defer cache.Close()
+	defer func() { _ = cache.Close() }()
 
 	// Try to write (should still work, just evicted immediately)
-	cache.SetAsync(7, 68, 34, []byte("data"))
+	_ = cache.SetAsync(7, 68, 34, []byte("data"))
 	time.Sleep(100 * time.Millisecond)
 
 	// File might be written but should be evicted
@@ -472,7 +472,7 @@ func TestDiskTileCache_ClearOnStartup(t *testing.T) {
 
 	// Write multiple tiles
 	for i := range 5 {
-		cache1.SetAsync(7, 68, uint32(i), []byte("stale data"))
+		_ = cache1.SetAsync(7, 68, uint32(i), []byte("stale data"))
 	}
 
 	// Wait for async writes
@@ -503,7 +503,7 @@ func TestDiskTileCache_ClearOnStartup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create second cache: %v", err)
 	}
-	defer cache2.Close()
+	defer func() { _ = cache2.Close() }()
 
 	// Verify cache is empty
 	cache2.mu.RLock()
@@ -584,7 +584,7 @@ func TestDiskTileCache_StartsWithZeroFiles(t *testing.T) {
 			if err != nil {
 				t.Fatalf("failed to create cache: %v", err)
 			}
-			defer cache.Close()
+			defer func() { _ = cache.Close() }()
 
 			// Verify fileCount is 0
 			cache.mu.RLock()
@@ -623,7 +623,7 @@ func TestDiskTileCache_ClearPreventsStaleTiles(t *testing.T) {
 	}
 
 	staleData := []byte("stale tile from old mbtiles")
-	cache1.SetAsync(7, 68, 34, staleData)
+	_ = cache1.SetAsync(7, 68, 34, staleData)
 	time.Sleep(100 * time.Millisecond)
 
 	// Verify stale data exists
@@ -632,14 +632,14 @@ func TestDiskTileCache_ClearPreventsStaleTiles(t *testing.T) {
 		t.Fatal("setup failed: stale data should be cached")
 	}
 
-	cache1.Close()
+	_ = cache1.Close()
 
 	// Simulate server restart after MBTiles regeneration
 	cache2, err := NewDiskTileCache(tmpDir, 10, testLogger())
 	if err != nil {
 		t.Fatalf("failed to create second cache: %v", err)
 	}
-	defer cache2.Close()
+	defer func() { _ = cache2.Close() }()
 
 	// Verify stale tile is NOT served
 	_, ok = cache2.Get(7, 68, 34)
@@ -649,7 +649,7 @@ func TestDiskTileCache_ClearPreventsStaleTiles(t *testing.T) {
 
 	// Verify cache is ready for fresh data
 	freshData := []byte("fresh tile from new mbtiles")
-	cache2.SetAsync(7, 68, 34, freshData)
+	_ = cache2.SetAsync(7, 68, 34, freshData)
 	time.Sleep(100 * time.Millisecond)
 
 	data, ok = cache2.Get(7, 68, 34)

@@ -22,7 +22,7 @@ func createTestMBTiles(t *testing.T, tiles map[string][]byte) (string, func()) {
 	dbPath := filepath.Join(tmpDir, "test.mbtiles")
 	db, err := sql.Open("sqlite3", dbPath)
 	if err != nil {
-		os.RemoveAll(tmpDir)
+		_ = os.RemoveAll(tmpDir)
 		t.Fatalf("failed to create test db: %v", err)
 	}
 
@@ -37,16 +37,16 @@ func createTestMBTiles(t *testing.T, tiles map[string][]byte) (string, func()) {
 		)
 	`)
 	if err != nil {
-		db.Close()
-		os.RemoveAll(tmpDir)
+		_ = db.Close()
+		_ = os.RemoveAll(tmpDir)
 		t.Fatalf("failed to create tiles table: %v", err)
 	}
 
 	// Insert test tiles
 	stmt, err := db.Prepare("INSERT INTO tiles (zoom_level, tile_column, tile_row, tile_data) VALUES (?, ?, ?, ?)")
 	if err != nil {
-		db.Close()
-		os.RemoveAll(tmpDir)
+		_ = db.Close()
+		_ = os.RemoveAll(tmpDir)
 		t.Fatalf("failed to prepare insert: %v", err)
 	}
 
@@ -54,24 +54,24 @@ func createTestMBTiles(t *testing.T, tiles map[string][]byte) (string, func()) {
 		var z, x, y int
 		_, err := parseKey(key, &z, &x, &y)
 		if err != nil {
-			stmt.Close()
-			db.Close()
-			os.RemoveAll(tmpDir)
+			_ = stmt.Close()
+			_ = db.Close()
+			_ = os.RemoveAll(tmpDir)
 			t.Fatalf("invalid tile key %q: %v", key, err)
 		}
 		if _, err := stmt.Exec(z, x, y, data); err != nil {
-			stmt.Close()
-			db.Close()
-			os.RemoveAll(tmpDir)
+			_ = stmt.Close()
+			_ = db.Close()
+			_ = os.RemoveAll(tmpDir)
 			t.Fatalf("failed to insert tile: %v", err)
 		}
 	}
 
-	stmt.Close()
-	db.Close()
+	_ = stmt.Close()
+	_ = db.Close()
 
 	return dbPath, func() {
-		os.RemoveAll(tmpDir)
+		_ = os.RemoveAll(tmpDir)
 	}
 }
 
@@ -140,7 +140,7 @@ func TestOpen(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Open() error = %v", err)
 		}
-		defer reader.Close()
+		defer func() { _ = reader.Close() }()
 
 		if reader.Path() != dbPath {
 			t.Errorf("Path() = %v, want %v", reader.Path(), dbPath)
@@ -159,25 +159,35 @@ func TestOpen(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to create temp dir: %v", err)
 		}
-		defer os.RemoveAll(tmpDir)
+		defer func() { _ = os.RemoveAll(tmpDir) }()
 
 		dbPath := filepath.Join(tmpDir, "dedup.mbtiles")
 		db, err := sql.Open("sqlite3", dbPath)
 		if err != nil {
 			t.Fatalf("failed to create db: %v", err)
 		}
-		db.Exec(`CREATE TABLE map (zoom_level INTEGER, tile_column INTEGER, tile_row INTEGER, tile_id TEXT)`)
-		db.Exec(`CREATE TABLE images (tile_id TEXT PRIMARY KEY, tile_data BLOB)`)
-		db.Exec(`CREATE VIEW tiles AS SELECT map.zoom_level, map.tile_column, map.tile_row, images.tile_data FROM map JOIN images ON map.tile_id = images.tile_id`)
-		db.Exec(`INSERT INTO images VALUES ('abc', 'tile-data')`)
-		db.Exec(`INSERT INTO map VALUES (0, 0, 0, 'abc')`)
-		db.Close()
+		if _, err := db.Exec(`CREATE TABLE map (zoom_level INTEGER, tile_column INTEGER, tile_row INTEGER, tile_id TEXT)`); err != nil {
+			t.Fatalf("failed to create map table: %v", err)
+		}
+		if _, err := db.Exec(`CREATE TABLE images (tile_id TEXT PRIMARY KEY, tile_data BLOB)`); err != nil {
+			t.Fatalf("failed to create images table: %v", err)
+		}
+		if _, err := db.Exec(`CREATE VIEW tiles AS SELECT map.zoom_level, map.tile_column, map.tile_row, images.tile_data FROM map JOIN images ON map.tile_id = images.tile_id`); err != nil {
+			t.Fatalf("failed to create tiles view: %v", err)
+		}
+		if _, err := db.Exec(`INSERT INTO images VALUES ('abc', 'tile-data')`); err != nil {
+			t.Fatalf("failed to insert image: %v", err)
+		}
+		if _, err := db.Exec(`INSERT INTO map VALUES (0, 0, 0, 'abc')`); err != nil {
+			t.Fatalf("failed to insert map entry: %v", err)
+		}
+		_ = db.Close()
 
 		reader, err := Open(dbPath)
 		if err != nil {
 			t.Fatalf("Open() error = %v, want nil for view-based mbtiles", err)
 		}
-		defer reader.Close()
+		defer func() { _ = reader.Close() }()
 	})
 
 	t.Run("returns error for invalid mbtiles (no tiles table)", func(t *testing.T) {
@@ -185,15 +195,17 @@ func TestOpen(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to create temp dir: %v", err)
 		}
-		defer os.RemoveAll(tmpDir)
+		defer func() { _ = os.RemoveAll(tmpDir) }()
 
 		dbPath := filepath.Join(tmpDir, "invalid.mbtiles")
 		db, err := sql.Open("sqlite3", dbPath)
 		if err != nil {
 			t.Fatalf("failed to create db: %v", err)
 		}
-		db.Exec("CREATE TABLE metadata (name TEXT, value TEXT)")
-		db.Close()
+		if _, err := db.Exec("CREATE TABLE metadata (name TEXT, value TEXT)"); err != nil {
+			t.Fatalf("failed to create metadata table: %v", err)
+		}
+		_ = db.Close()
 
 		_, err = Open(dbPath)
 		if err == nil {
@@ -222,7 +234,7 @@ func TestGetTile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	t.Run("retrieves tile with XYZ to TMS conversion", func(t *testing.T) {
 		// At z=0, there's only one tile (0,0)

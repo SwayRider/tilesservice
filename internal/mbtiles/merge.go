@@ -46,7 +46,9 @@ func MergeTiles(tiles [][]byte) ([]byte, error) {
 				return nil, err
 			}
 			data, err = io.ReadAll(reader)
-			reader.Close()
+			if cerr := reader.Close(); err == nil {
+				err = cerr
+			}
 			if err != nil {
 				return nil, err
 			}
@@ -93,7 +95,7 @@ func MergeTiles(tiles [][]byte) ([]byte, error) {
 		var buf bytes.Buffer
 		writer := gzip.NewWriter(&buf)
 		if _, err := writer.Write(mergedData); err != nil {
-			writer.Close()
+			_ = writer.Close()
 			return nil, err
 		}
 		if err := writer.Close(); err != nil {

@@ -351,7 +351,9 @@ func startHTTPServer(a app.App) error {
 	mux.HandleFunc("GET /v1/tiles/ping", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"status":"ok"}`))
+		if _, err := w.Write([]byte(`{"status":"ok"}`)); err != nil {
+			a.Logger().Debugf("failed to write ping response: %v", err)
+		}
 	})
 
 	// Style endpoints — require JWT with tiles:serve scope (or user JWT).
@@ -426,7 +428,9 @@ func stopHTTPServer(a app.App) {
 	// Close tile index
 	idx := app.GetAppData[*tileindex.TileIndex](a, "TileIndex")
 	if idx != nil {
-		idx.Close()
+		if err := idx.Close(); err != nil {
+			lg.Errorf("failed to close tile index: %v", err)
+		}
 	}
 }
 

@@ -67,7 +67,7 @@ func TestCompressedTileCache_MultipleTiles(t *testing.T) {
 func TestCompressedTileCache_LRU(t *testing.T) {
 	// Create small cache that can hold only 3 tiles
 	cache := NewCompressedTileCache(3, testLogger())
-	defer cache.Close()
+	defer func() { _ = cache.Close() }()
 
 	// Fill cache with 3 tiles
 	cache.Set(1, 0, 0, []byte("tile 1"))
