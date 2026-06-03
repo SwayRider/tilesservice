@@ -1,0 +1,12 @@
+name: Router Service CI
+
+on:
+  pull_request:
+  push:
+    branches: [ main ]
+
+jobs:
+  ci:
+    uses: swayrider/ci-workflows/.github/workflows/go-ci.yml@main
+  dco:
+    uses: swayrider/ci-workflows/.github/workflows/dco-check.yml@main

@@ -7,7 +7,7 @@ require (
 	github.com/paulmach/orb v0.13.0
 	github.com/rs/cors v1.11.1
 	github.com/swayrider/grpcclients v0.1.4
-	github.com/swayrider/swlib v0.1.4
+	github.com/swayrider/swlib v0.1.5
 )
 
 require (
