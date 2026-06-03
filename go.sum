@@ -198,6 +198,8 @@ github.com/swayrider/protos v0.1.2 h1:YJ+f3Dty8rvvL/2tm73TLOcfeiUHZpi2EDV9YIplq9
 github.com/swayrider/protos v0.1.2/go.mod h1:e5VCOSgkeRKptyLYV0l351sdHpuzhnpN81UZT8LOXRg=
 github.com/swayrider/swlib v0.1.4 h1:1Hl8VU5Nva7ks+IWa8xoh6p+vhDjCrSXDjmbPS7tYvw=
 github.com/swayrider/swlib v0.1.4/go.mod h1:Iv5ojh35cHoGmjNdvPPovW3i8sQBtQXmK9e2rTq4sRc=
+github.com/swayrider/swlib v0.1.5 h1:Fl68c8dbDSQ7aam6baPWmrpZcHz+w/skkn0/tfGm4FY=
+github.com/swayrider/swlib v0.1.5/go.mod h1:Iv5ojh35cHoGmjNdvPPovW3i8sQBtQXmK9e2rTq4sRc=
 github.com/tv42/httpunix v0.0.0-20150427012821-b75d8614f926/go.mod h1:9ESjWnEqriFuLhtthL60Sar/7RFoluCcXsuvEwTV5KM=
 github.com/yuin/goldmark v1.1.27/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9decYSb74=
 github.com/yuin/goldmark v1.2.1/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9decYSb74=

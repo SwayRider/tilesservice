@@ -149,7 +149,9 @@ func (h *StyleHTTPHandler) handleGetStyle(w http.ResponseWriter, r *http.Request
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	w.Write(buf.Bytes())
+	if _, err := w.Write(buf.Bytes()); err != nil {
+		h.l.Debugf("failed to write style response: %v", err)
+	}
 }
 
 // listStyles scans the styles directory and returns all available styles.

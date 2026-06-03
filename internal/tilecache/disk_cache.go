@@ -24,6 +24,7 @@ type DiskTileCache struct {
 	writeQueue     chan writeJob    // Async write queue
 	stopCh         chan struct{}    // Shutdown signal
 	evictionTicker *time.Ticker     // Background eviction ticker
+	wg             sync.WaitGroup   // Tracks background worker goroutines
 	l              *log.Logger
 }
 
@@ -78,7 +79,7 @@ func NewDiskTileCache(basePath string, maxFiles int, logger *log.Logger) (*DiskT
 	CREATE INDEX IF NOT EXISTS idx_access_time ON tile_cache(access_time);
 	`
 	if _, err := db.Exec(schema); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("failed to initialize schema: %w", err)
 	}
 
@@ -94,6 +95,7 @@ func NewDiskTileCache(basePath string, maxFiles int, logger *log.Logger) (*DiskT
 	}
 
 	// Start background workers
+	c.wg.Add(2)
 	go c.writeWorker()
 	go c.evictionWorker()
 
@@ -148,25 +150,16 @@ func (c *DiskTileCache) Close() error {
 
 	c.l.Infoln("closing disk cache")
 
-	// Signal workers to stop
+	// Signal workers to stop; they drain the write queue before exiting
 	close(c.stopCh)
 
 	// Stop eviction ticker
 	c.evictionTicker.Stop()
 
-	// Wait for write queue to drain (with timeout)
-	timeout := time.After(10 * time.Second)
-	for len(c.writeQueue) > 0 {
-		select {
-		case <-timeout:
-			c.l.Warnf("timeout waiting for write queue to drain (%d pending)", len(c.writeQueue))
-			goto cleanup
-		case <-time.After(100 * time.Millisecond):
-			// Continue waiting
-		}
-	}
+	// Wait for both workers to finish — writeWorker drains the queue
+	// before returning, so all pending writes complete before we proceed.
+	c.wg.Wait()
 
-cleanup:
 	// Close database
 	if err := c.lruDB.Close(); err != nil {
 		c.l.Errorf("failed to close database: %v", err)
@@ -183,6 +176,7 @@ cleanup:
 
 // writeWorker processes async write jobs from the queue.
 func (c *DiskTileCache) writeWorker() {
+	defer c.wg.Done()
 	for {
 		select {
 		case job := <-c.writeQueue:
@@ -209,6 +203,7 @@ func (c *DiskTileCache) writeWorker() {
 
 // evictionWorker monitors cache size and evicts oldest files when over limit.
 func (c *DiskTileCache) evictionWorker() {
+	defer c.wg.Done()
 	for {
 		select {
 		case <-c.evictionTicker.C:
@@ -266,7 +261,7 @@ func (c *DiskTileCache) writeFile(z, x, y uint32, data []byte) error {
 	}
 
 	if err := os.Rename(tmpPath, path); err != nil {
-		os.Remove(tmpPath) // Clean up temp file
+		_ = os.Remove(tmpPath)
 		return fmt.Errorf("failed to rename temp file: %w", err)
 	}
 
@@ -334,7 +329,7 @@ func (c *DiskTileCache) evictBatch(n int) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("failed to query oldest tiles: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	evicted := 0
 	for rows.Next() {

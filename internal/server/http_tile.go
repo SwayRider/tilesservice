@@ -133,7 +133,9 @@ func (h *TileHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Encoding", "gzip")
 		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(tileData)))
 		w.WriteHeader(http.StatusOK)
-		w.Write(tileData)
+		if _, err := w.Write(tileData); err != nil {
+			h.l.Debugf("failed to write pre-compressed tile: %v", err)
+		}
 		return
 	}
 
@@ -144,7 +146,9 @@ func (h *TileHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// Serve uncompressed (backward compatible)
 		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(tileData)))
 		w.WriteHeader(http.StatusOK)
-		w.Write(tileData)
+		if _, err := w.Write(tileData); err != nil {
+			h.l.Debugf("failed to write uncompressed tile: %v", err)
+		}
 		return
 	}
 
@@ -154,7 +158,9 @@ func (h *TileHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(compressed)))
 		w.Header().Set("Vary", "Accept-Encoding")
 		w.WriteHeader(http.StatusOK)
-		w.Write(compressed)
+		if _, err := w.Write(compressed); err != nil {
+			h.l.Debugf("failed to write cached tile: %v", err)
+		}
 		// Note: Cache hit logging happens in the cache Get() method
 		return
 	}
@@ -168,7 +174,9 @@ func (h *TileHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.l.Errorf("failed to compress tile z=%d x=%d y=%d: %v, serving uncompressed", z, x, y, err)
 		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(tileData)))
 		w.WriteHeader(http.StatusOK)
-		w.Write(tileData)
+		if _, err := w.Write(tileData); err != nil {
+			h.l.Debugf("failed to write fallback uncompressed tile: %v", err)
+		}
 		return
 	}
 
@@ -180,7 +188,9 @@ func (h *TileHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(compressed)))
 	w.Header().Set("Vary", "Accept-Encoding")
 	w.WriteHeader(http.StatusOK)
-	w.Write(compressed)
+	if _, err := w.Write(compressed); err != nil {
+		h.l.Debugf("failed to write compressed tile: %v", err)
+	}
 
 	ratio := float64(len(tileData)) / float64(len(compressed))
 	h.l.Debugf("compressed and cached tile z=%d x=%d y=%d original=%d compressed=%d ratio=%.1fx",

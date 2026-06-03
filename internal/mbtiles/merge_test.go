@@ -62,8 +62,8 @@ func createMultiLayerMVTTile(layers map[string]int) []byte {
 func gzipData(data []byte) []byte {
 	var buf bytes.Buffer
 	w := gzip.NewWriter(&buf)
-	w.Write(data)
-	w.Close()
+	_, _ = w.Write(data)
+	_ = w.Close()
 	return buf.Bytes()
 }
 
@@ -180,8 +180,8 @@ func TestMergeTiles_GzipCompressed(t *testing.T) {
 		t.Fatalf("failed to create gzip reader: %v", err)
 	}
 	var buf bytes.Buffer
-	buf.ReadFrom(reader)
-	reader.Close()
+	_, _ = buf.ReadFrom(reader)
+	_ = reader.Close()
 
 	layers, err := mvt.Unmarshal(buf.Bytes())
 	if err != nil {
@@ -213,8 +213,8 @@ func TestMergeTiles_MixedCompression(t *testing.T) {
 		t.Fatalf("failed to create gzip reader: %v", err)
 	}
 	var buf bytes.Buffer
-	buf.ReadFrom(reader)
-	reader.Close()
+	_, _ = buf.ReadFrom(reader)
+	_ = reader.Close()
 
 	layers, err := mvt.Unmarshal(buf.Bytes())
 	if err != nil {

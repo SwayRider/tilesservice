@@ -71,7 +71,7 @@ func TestStyleHandler_List(t *testing.T) {
 	t.Run("non-json files in dir are ignored", func(t *testing.T) {
 		dir := t.TempDir()
 		writeStyleFile(t, dir, "extra.json")
-		os.WriteFile(filepath.Join(dir, "readme.txt"), []byte("hello"), 0644)
+		_ = os.WriteFile(filepath.Join(dir, "readme.txt"), []byte("hello"), 0644)
 
 		h := newStyleHandler(t, dir)
 		req := httptest.NewRequest(http.MethodGet, "/v1/tiles/styles", nil)
@@ -79,7 +79,7 @@ func TestStyleHandler_List(t *testing.T) {
 		h.ServeHTTP(w, req)
 
 		var styles []map[string]string
-		json.Unmarshal(w.Body.Bytes(), &styles)
+		_ = json.Unmarshal(w.Body.Bytes(), &styles)
 		names := styleNames(styles)
 
 		for _, n := range names {
@@ -100,7 +100,7 @@ func TestStyleHandler_List(t *testing.T) {
 		h.ServeHTTP(w, req)
 
 		var styles []map[string]string
-		json.Unmarshal(w.Body.Bytes(), &styles)
+		_ = json.Unmarshal(w.Body.Bytes(), &styles)
 		names := styleNames(styles)
 
 		count := 0

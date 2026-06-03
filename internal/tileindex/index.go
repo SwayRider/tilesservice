@@ -202,33 +202,6 @@ func tileCornerToLatLon(z, x, y uint32) (lat, lon float64) {
 	return lat, lon
 }
 
-// getFilePath determines the MBTiles file path for the given tile coordinates.
-//
-// For L0 (zoom 0-6), returns the single world file.
-// For L1-L2, calculates the tile's southwest corner, snaps to the 10° grid,
-// and returns the corresponding regional file path.
-//
-// Deprecated: Use getOverlappingFilePaths for tiles that may span grid boundaries.
-func (idx *TileIndex) getFilePath(z, x, y uint32) (string, error) {
-	layer := zoomToLayer(z)
-
-	if layer == LayerL0 {
-		return filepath.Join(idx.basePath, "L0.mbtiles"), nil
-	}
-
-	// Calculate the southwest corner of the tile to determine which file to use
-	lat, lon := tileToLatLon(z, x, y)
-
-	// Snap to 10-degree grid
-	gridLat, gridLon := snapToGrid(lat, lon)
-
-	// Build filename
-	filename := formatGridFilename(gridLat, gridLon)
-	layerDir := fmt.Sprintf("L%d", layer)
-
-	return filepath.Join(idx.basePath, layerDir, filename), nil
-}
-
 // getReader returns a cached reader for the given path, opening it if necessary.
 func (idx *TileIndex) getReader(path string) (*mbtiles.Reader, error) {
 	idx.mu.RLock()

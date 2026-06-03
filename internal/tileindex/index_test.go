@@ -185,7 +185,7 @@ func createTestTileDir(t *testing.T) (string, func()) {
 	// At z=8: x=131, y=84 (XYZ) -> TMS y = 255 - 84 = 171
 	l1Dir := filepath.Join(tmpDir, "L1")
 	if err := os.MkdirAll(l1Dir, 0755); err != nil {
-		os.RemoveAll(tmpDir)
+		_ = os.RemoveAll(tmpDir)
 		t.Fatalf("failed to create L1 dir: %v", err)
 	}
 	createTestMBTiles(t, filepath.Join(l1Dir, "N50_E000.mbtiles"), map[tileKey][]byte{
@@ -197,7 +197,7 @@ func createTestTileDir(t *testing.T) (string, func()) {
 	// At z=12: x=2100, y=1362 (XYZ) -> TMS y = 4095 - 1362 = 2733
 	l2Dir := filepath.Join(tmpDir, "L2")
 	if err := os.MkdirAll(l2Dir, 0755); err != nil {
-		os.RemoveAll(tmpDir)
+		_ = os.RemoveAll(tmpDir)
 		t.Fatalf("failed to create L2 dir: %v", err)
 	}
 	createTestMBTiles(t, filepath.Join(l2Dir, "N50_E000.mbtiles"), map[tileKey][]byte{
@@ -213,7 +213,7 @@ func createTestTileDir(t *testing.T) (string, func()) {
 	})
 
 	return tmpDir, func() {
-		os.RemoveAll(tmpDir)
+		_ = os.RemoveAll(tmpDir)
 	}
 }
 
@@ -228,7 +228,7 @@ func createTestMBTiles(t *testing.T, path string, tiles map[tileKey][]byte) {
 	if err != nil {
 		t.Fatalf("failed to create db: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	_, err = db.Exec(`
 		CREATE TABLE tiles (
@@ -259,7 +259,7 @@ func TestTileIndex_GetTile(t *testing.T) {
 	defer cleanup()
 
 	idx := New(tmpDir)
-	defer idx.Close()
+	defer func() { _ = idx.Close() }()
 
 	t.Run("retrieves L0 world tile at z=0", func(t *testing.T) {
 		data, err := idx.GetTile(0, 0, 0)
@@ -489,7 +489,7 @@ func createGridBoundaryTestDir(t *testing.T) (string, func()) {
 	// Create L1 directory with 4 files at the 50°N/10°E intersection
 	l1Dir := filepath.Join(tmpDir, "L1")
 	if err := os.MkdirAll(l1Dir, 0755); err != nil {
-		os.RemoveAll(tmpDir)
+		_ = os.RemoveAll(tmpDir)
 		t.Fatalf("failed to create L1 dir: %v", err)
 	}
 
@@ -519,7 +519,7 @@ func createGridBoundaryTestDir(t *testing.T) (string, func()) {
 	})
 
 	return tmpDir, func() {
-		os.RemoveAll(tmpDir)
+		_ = os.RemoveAll(tmpDir)
 	}
 }
 
@@ -528,7 +528,7 @@ func TestTileIndex_GetTile_GridBoundary(t *testing.T) {
 	defer cleanup()
 
 	idx := New(tmpDir)
-	defer idx.Close()
+	defer func() { _ = idx.Close() }()
 
 	t.Run("merges tiles from 4 grid cells", func(t *testing.T) {
 		// Request tile 8/135/86 which spans all 4 grid cells

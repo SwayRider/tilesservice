@@ -16,7 +16,7 @@ func TestTwoTierCache_MemoryHit(t *testing.T) {
 	}
 
 	twoTier := NewTwoTierCache(memCache, diskCache, testLogger())
-	defer twoTier.Close()
+	defer func() { _ = twoTier.Close() }()
 
 	// Write tile
 	testData := []byte("test data")
@@ -44,7 +44,7 @@ func TestTwoTierCache_DiskHitPromotion(t *testing.T) {
 	}
 
 	twoTier := NewTwoTierCache(memCache, diskCache, testLogger())
-	defer twoTier.Close()
+	defer func() { _ = twoTier.Close() }()
 
 	// Write tile
 	testData := []byte("test data")
@@ -86,7 +86,7 @@ func TestTwoTierCache_CacheMiss(t *testing.T) {
 	}
 
 	twoTier := NewTwoTierCache(memCache, diskCache, testLogger())
-	defer twoTier.Close()
+	defer func() { _ = twoTier.Close() }()
 
 	// Try to get non-existent tile
 	_, ok := twoTier.Get(7, 68, 34)
@@ -107,7 +107,7 @@ func TestTwoTierCache_MemoryEvictionWritesToDisk(t *testing.T) {
 	}
 
 	twoTier := NewTwoTierCache(memCache, diskCache, testLogger())
-	defer twoTier.Close()
+	defer func() { _ = twoTier.Close() }()
 
 	// Write 3 tiles (exceeds memory limit of 2)
 	twoTier.Set(7, 68, 0, []byte("tile0"))
@@ -148,7 +148,7 @@ func TestTwoTierCache_ConcurrentAccess(t *testing.T) {
 	}
 
 	twoTier := NewTwoTierCache(memCache, diskCache, testLogger())
-	defer twoTier.Close()
+	defer func() { _ = twoTier.Close() }()
 
 	// Concurrent writes and reads
 	done := make(chan bool)
@@ -187,10 +187,10 @@ func TestTwoTierCache_DiskUnavailable(t *testing.T) {
 	}
 
 	twoTier := NewTwoTierCache(memCache, diskCache, testLogger())
-	defer twoTier.Close()
+	defer func() { _ = twoTier.Close() }()
 
 	// Close disk cache to simulate unavailability
-	diskCache.Close()
+	_ = diskCache.Close()
 
 	// Writes should still work (memory layer continues)
 	testData := []byte("test data")
@@ -218,7 +218,7 @@ func TestTwoTierCache_PromotionUpdatesAccessPattern(t *testing.T) {
 	}
 
 	twoTier := NewTwoTierCache(memCache, diskCache, testLogger())
-	defer twoTier.Close()
+	defer func() { _ = twoTier.Close() }()
 
 	// Write tiles
 	twoTier.Set(7, 68, 0, []byte("tile0"))
@@ -260,7 +260,7 @@ func TestTwoTierCache_DiskWriteQueueFull(t *testing.T) {
 	}
 
 	twoTier := NewTwoTierCache(memCache, diskCache, testLogger())
-	defer twoTier.Close()
+	defer func() { _ = twoTier.Close() }()
 
 	// Write many tiles rapidly to overflow disk queue
 	for i := 0; i < 1100; i++ {
@@ -285,7 +285,7 @@ func TestTwoTierCache_MemoryDisabled(t *testing.T) {
 	}
 
 	twoTier := NewTwoTierCache(memCache, diskCache, testLogger())
-	defer twoTier.Close()
+	defer func() { _ = twoTier.Close() }()
 
 	// Write tile
 	twoTier.Set(7, 68, 34, []byte("test data"))
@@ -313,7 +313,7 @@ func TestTwoTierCache_EvictionCallbackWithInvalidKey(t *testing.T) {
 	}
 
 	twoTier := NewTwoTierCache(memCache, diskCache, testLogger())
-	defer twoTier.Close()
+	defer func() { _ = twoTier.Close() }()
 
 	// Manually trigger eviction callback with invalid key
 	// This tests the error handling in the callback
@@ -342,7 +342,7 @@ func TestTwoTierCache_ConcurrentReadsDuringEviction(t *testing.T) {
 	}
 
 	twoTier := NewTwoTierCache(memCache, diskCache, testLogger())
-	defer twoTier.Close()
+	defer func() { _ = twoTier.Close() }()
 
 	// Write initial tiles
 	for i := 0; i < 3; i++ {
@@ -393,7 +393,7 @@ func TestTwoTierCache_EmptyCache(t *testing.T) {
 	}
 
 	twoTier := NewTwoTierCache(memCache, diskCache, testLogger())
-	defer twoTier.Close()
+	defer func() { _ = twoTier.Close() }()
 
 	// Get from empty cache
 	if _, ok := twoTier.Get(7, 68, 34); ok {
@@ -412,7 +412,7 @@ func TestTwoTierCache_LargeDataPromotion(t *testing.T) {
 	}
 
 	twoTier := NewTwoTierCache(memCache, diskCache, testLogger())
-	defer twoTier.Close()
+	defer func() { _ = twoTier.Close() }()
 
 	// Large tile data (1MB)
 	largeData := make([]byte, 1024*1024)
