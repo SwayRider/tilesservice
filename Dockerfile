@@ -1,11 +1,11 @@
 # syntax=docker/dockerfile:1.4
-FROM --platform=$BUILDPLATFORM golang:latest as builder
+FROM --platform=$BUILDPLATFORM golang:1.26-bookworm AS builder
 
 ARG TARGETOS
 ARG TARGETARCH
-ARG TARGETVARIANT
-ARG CGO_ENABLED=1
 
+# tilesservice depends on github.com/mattn/go-sqlite3 (MBTiles + disk cache),
+# which requires cgo, so the cross-compilation toolchains are kept.
 RUN apt-get update && apt-get install -y gcc
 RUN if [ "${TARGETARCH}" = "arm64" ]; then apt-get install -y gcc-aarch64-linux-gnu; fi
 RUN if [ "${TARGETARCH}" = "amd64" ]; then apt-get install -y gcc-x86-64-linux-gnu; fi
@@ -36,9 +36,12 @@ RUN if [ "${TARGETARCH}" = "amd64" ]; then \
 
 # Runtime stage
 FROM --platform=$TARGETPLATFORM debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=builder /app/tilesservice .
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --from=builder /app/assets/map/styles ./assets/map/styles
 ENV STYLES_PATH=/app/assets/map/styles
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+    CMD curl -fsS http://localhost:8080/v1/tiles/ping || exit 1
 CMD ["./tilesservice"]
