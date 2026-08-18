@@ -31,15 +31,15 @@ var zDirRe = regexp.MustCompile(`^z[0-9]+$`)
 // It uses a hierarchical directory structure for file storage and SQLite for
 // metadata tracking and LRU ordering.
 type DiskTileCache struct {
-	basePath       string           // Root cache directory
-	mu             sync.RWMutex     // Protects metadata
-	maxFiles       int              // Maximum cached files (soft limit)
-	fileCount      int              // Current file count
-	lruDB          *sql.DB          // SQLite for LRU tracking
-	writeQueue     chan writeJob    // Async write queue
-	stopCh         chan struct{}    // Shutdown signal
-	evictionTicker *time.Ticker     // Background eviction ticker
-	wg             sync.WaitGroup   // Tracks background worker goroutines
+	basePath       string         // Root cache directory
+	mu             sync.RWMutex   // Protects metadata
+	maxFiles       int            // Maximum cached files (soft limit)
+	fileCount      int            // Current file count
+	lruDB          *sql.DB        // SQLite for LRU tracking
+	writeQueue     chan writeJob  // Async write queue
+	stopCh         chan struct{}  // Shutdown signal
+	evictionTicker *time.Ticker   // Background eviction ticker
+	wg             sync.WaitGroup // Tracks background worker goroutines
 	l              *log.Logger
 }
 
