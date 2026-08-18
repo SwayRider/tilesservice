@@ -3,6 +3,7 @@ package tilecache
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -844,5 +845,104 @@ func TestDiskTileCache_ClearLeavesUnknownEntries(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(tmpDir, "z7")); !os.IsNotExist(err) {
 		t.Error("stale z-dir should have been cleared")
+	}
+}
+
+// TestDiskTileCache_AccessBurstBound verifies that disk-cache hits do not
+// spawn a goroutine per request: the goroutine count stays bounded across a
+// large burst of Gets.
+func TestDiskTileCache_AccessBurstBound(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cache, err := NewDiskTileCache(tmpDir, 100000, testLogger())
+	if err != nil {
+		t.Fatalf("failed to create cache: %v", err)
+	}
+	defer func() { _ = cache.Close() }()
+
+	// Cache a tile so Gets hit the access-time path.
+	_ = cache.SetAsync(7, 68, 34, []byte("data"))
+	time.Sleep(100 * time.Millisecond)
+
+	before := runtime.NumGoroutine()
+	for i := 0; i < 10000; i++ {
+		_, _ = cache.Get(7, 68, 34)
+	}
+	time.Sleep(200 * time.Millisecond) // let the worker coalesce and finish
+	after := runtime.NumGoroutine()
+
+	if after > before+5 {
+		t.Errorf("goroutine count grew during access burst: before=%d after=%d", before, after)
+	}
+}
+
+// TestDiskTileCache_AccessBatchUpdates verifies that the coalescing worker
+// bumps access times for all hit tiles, including repeated hits of the same
+// tile.
+func TestDiskTileCache_AccessBatchUpdates(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cache, err := NewDiskTileCache(tmpDir, 100000, testLogger())
+	if err != nil {
+		t.Fatalf("failed to create cache: %v", err)
+	}
+	defer func() { _ = cache.Close() }()
+
+	// Cache several tiles.
+	for i := uint32(0); i < 5; i++ {
+		_ = cache.SetAsync(7, 68, i, []byte("data"))
+	}
+	time.Sleep(100 * time.Millisecond)
+
+	readAccess := func() map[string]int64 {
+		cache.mu.RLock()
+		defer cache.mu.RUnlock()
+		rows, err := cache.lruDB.Query("SELECT tile_key, access_time FROM tile_cache")
+		if err != nil {
+			t.Fatalf("failed to query access times: %v", err)
+		}
+		defer func() { _ = rows.Close() }()
+		times := make(map[string]int64)
+		for rows.Next() {
+			var key string
+			var accessTime int64
+			if err := rows.Scan(&key, &accessTime); err != nil {
+				t.Fatalf("failed to scan row: %v", err)
+			}
+			times[key] = accessTime
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatalf("row iteration error: %v", err)
+		}
+		return times
+	}
+
+	before := readAccess()
+	if len(before) != 5 {
+		t.Fatalf("expected 5 tile rows, got %d", len(before))
+	}
+
+	// Ensure a detectable (>= 1s) gap at Unix-second resolution.
+	time.Sleep(1100 * time.Millisecond)
+
+	// Hit each tile repeatedly; duplicate hits must coalesce, not break.
+	for j := 0; j < 10; j++ {
+		for i := uint32(0); i < 5; i++ {
+			_, _ = cache.Get(7, 68, i)
+		}
+	}
+
+	time.Sleep(500 * time.Millisecond) // let the worker coalesce and commit
+
+	after := readAccess()
+	for key, beforeTS := range before {
+		afterTS, ok := after[key]
+		if !ok {
+			t.Errorf("tile %s missing from cache after hits", key)
+			continue
+		}
+		if afterTS <= beforeTS {
+			t.Errorf("access time for %s not updated: before=%d after=%d", key, beforeTS, afterTS)
+		}
 	}
 }

@@ -37,6 +37,7 @@ type DiskTileCache struct {
 	fileCount      int            // Current file count
 	lruDB          *sql.DB        // SQLite for LRU tracking
 	writeQueue     chan writeJob  // Async write queue
+	accessQueue    chan accessJob // Coalesced access-time update queue
 	stopCh         chan struct{}  // Shutdown signal
 	evictionTicker *time.Ticker   // Background eviction ticker
 	wg             sync.WaitGroup // Tracks background worker goroutines
@@ -47,6 +48,16 @@ type DiskTileCache struct {
 type writeJob struct {
 	z, x, y uint32
 	data    []byte
+}
+
+// accessJob represents a tile hit whose access time should be bumped.
+type accessJob struct {
+	z, x, y uint32
+}
+
+// key returns the tile key used as the SQLite tile_key ("z/x/y").
+func (j accessJob) key() string {
+	return fmt.Sprintf("%d/%d/%d", j.z, j.x, j.y)
 }
 
 // NewDiskTileCache creates a new disk-based tile cache.
@@ -106,16 +117,18 @@ func NewDiskTileCache(basePath string, maxFiles int, logger *log.Logger) (*DiskT
 		maxFiles:       maxFiles,
 		fileCount:      0, // Always start fresh after cache clear
 		lruDB:          db,
-		writeQueue:     make(chan writeJob, 1000), // Buffer for async writes
+		writeQueue:     make(chan writeJob, 1000),  // Buffer for async writes
+		accessQueue:    make(chan accessJob, 1000), // Buffer for access-time updates
 		stopCh:         make(chan struct{}),
 		evictionTicker: time.NewTicker(5 * time.Second),
 		l:              l,
 	}
 
 	// Start background workers
-	c.wg.Add(2)
+	c.wg.Add(3)
 	go c.writeWorker()
 	go c.evictionWorker()
+	go c.accessWorker()
 
 	l.Infof("disk cache initialized at %s (max: %d files)", basePath, maxFiles)
 	return c, nil
@@ -270,8 +283,12 @@ func (c *DiskTileCache) Get(z, x, y uint32) ([]byte, bool) {
 	// Debug log for successful read
 	c.l.Debugf("disk cache hit z=%d x=%d y=%d size=%d", z, x, y, len(data))
 
-	// Update access time asynchronously (best-effort)
-	go c.updateAccessTime(z, x, y)
+	// Queue access-time update (best-effort, coalesced by the access worker).
+	select {
+	case c.accessQueue <- accessJob{z, x, y}:
+	default:
+		// Queue full — drop; access times are best-effort LRU hints.
+	}
 
 	return data, true
 }
@@ -437,8 +454,35 @@ func (c *DiskTileCache) writeFile(z, x, y uint32, data []byte) error {
 	return nil
 }
 
-// updateAccessTime updates the access timestamp for a tile (best-effort).
-func (c *DiskTileCache) updateAccessTime(z, x, y uint32) {
+// accessWorker consumes queued tile hits and bumps their access times in
+// coalesced batches. A batch transaction covers everything queued at drain
+// time, so repeated hits to the same tile collapse to a single UPDATE.
+func (c *DiskTileCache) accessWorker() {
+	defer c.wg.Done()
+	for {
+		select {
+		case <-c.stopCh:
+			return
+		case first := <-c.accessQueue:
+			batch := map[string]int64{first.key(): time.Now().Unix()}
+			// Coalesce whatever else is already queued (best-effort batching).
+			draining := true
+			for draining {
+				select {
+				case job := <-c.accessQueue:
+					batch[job.key()] = time.Now().Unix()
+				default:
+					draining = false
+				}
+			}
+			c.applyAccessBatch(batch)
+		}
+	}
+}
+
+// applyAccessBatch writes a batch of access-time updates in a single SQLite
+// transaction (best-effort; failures are logged, not fatal).
+func (c *DiskTileCache) applyAccessBatch(batch map[string]int64) {
 	// Check if cache is being shut down
 	select {
 	case <-c.stopCh:
@@ -446,21 +490,37 @@ func (c *DiskTileCache) updateAccessTime(z, x, y uint32) {
 	default:
 	}
 
-	key := fmt.Sprintf("%d/%d/%d", z, x, y)
-	now := time.Now().Unix()
-
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	_, err := c.lruDB.Exec("UPDATE tile_cache SET access_time = ? WHERE tile_key = ?", now, key)
+	tx, err := c.lruDB.Begin()
 	if err != nil {
-		// Silently ignore errors during shutdown
-		select {
-		case <-c.stopCh:
-			return
-		default:
-			c.l.Debugf("failed to update access time for z=%d x=%d y=%d: %v", z, x, y, err)
+		c.l.Debugf("failed to begin access-time batch: %v", err)
+		return
+	}
+	defer func() { _ = tx.Rollback() }() // no-op after Commit
+
+	stmt, err := tx.Prepare("UPDATE tile_cache SET access_time = ? WHERE tile_key = ?")
+	if err != nil {
+		c.l.Debugf("failed to prepare access-time update: %v", err)
+		return
+	}
+	defer func() { _ = stmt.Close() }()
+
+	for key, ts := range batch {
+		if _, err := stmt.Exec(ts, key); err != nil {
+			// Silently ignore errors during shutdown
+			select {
+			case <-c.stopCh:
+				return
+			default:
+				c.l.Debugf("failed to update access time for %s: %v", key, err)
+			}
 		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		c.l.Debugf("failed to commit access-time batch: %v", err)
 	}
 }
 
