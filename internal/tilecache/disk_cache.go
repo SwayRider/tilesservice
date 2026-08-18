@@ -5,12 +5,27 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"sync"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 	log "github.com/swayrider/swlib/logger"
 )
+
+// markerFileName is the hidden file that marks a directory as owned by the
+// disk tile cache. NewDiskTileCache refuses to clear a directory that does
+// not carry this marker (and is not obviously a tile-cache layout), so a
+// misconfigured DISK_CACHE_PATH can never silently wipe unrelated data.
+const markerFileName = ".tilesservice_cache_owner"
+
+// markerFileContent identifies the cache format that created the marker.
+// Bump it if the on-disk layout ever changes.
+const markerFileContent = "tilesservice disk cache v1\n"
+
+// zDirRe matches the z<zoom> subdirectories the cache creates for tiles.
+var zDirRe = regexp.MustCompile(`^z[0-9]+$`)
 
 // DiskTileCache implements a persistent disk-based tile cache with LRU eviction.
 // It uses a hierarchical directory structure for file storage and SQLite for
@@ -38,24 +53,27 @@ type writeJob struct {
 // basePath: root directory for cache files
 // maxFiles: maximum number of cached files (soft limit)
 // logger: logger instance
+//
+// The cache claims basePath with an ownership marker file and, at startup,
+// clears only the known cache artifacts inside it (z<zoom> subdirectories and
+// the metadata database). It never removes basePath itself, and it refuses to
+// clear a directory that does not look like a tile cache, so a misconfigured
+// DISK_CACHE_PATH cannot cause data loss.
 func NewDiskTileCache(basePath string, maxFiles int, logger *log.Logger) (*DiskTileCache, error) {
 	l := logger.Derive(log.WithComponent("DiskTileCache"))
 
-	// Create cache directory if not exists
-	if err := os.MkdirAll(basePath, 0755); err != nil {
-		return nil, fmt.Errorf("failed to create cache directory: %w", err)
+	// Reject obviously wrong paths before touching the filesystem.
+	if err := validateCachePath(basePath); err != nil {
+		return nil, err
 	}
 
-	// Clear existing cache directory to prevent serving stale tiles
-	// after source MBTiles have been regenerated
-	l.Infoln("clearing existing cache directory")
-	if err := os.RemoveAll(basePath); err != nil && !os.IsNotExist(err) {
-		return nil, fmt.Errorf("failed to clear cache directory: %w", err)
-	}
-
-	// Recreate cache directory
-	if err := os.MkdirAll(basePath, 0755); err != nil {
-		return nil, fmt.Errorf("failed to create cache directory: %w", err)
+	// Claim the directory with an ownership marker and clear only the known
+	// cache artifacts inside it (z<zoom> subdirectories and the metadata DB).
+	// This replaces the old os.RemoveAll(basePath) startup clear, which would
+	// recursively delete whatever directory was configured — catastrophic on
+	// a misconfigured DISK_CACHE_PATH.
+	if err := prepareCacheDir(basePath, l); err != nil {
+		return nil, err
 	}
 
 	// Open/create SQLite database
@@ -101,6 +119,138 @@ func NewDiskTileCache(basePath string, maxFiles int, logger *log.Logger) (*DiskT
 
 	l.Infof("disk cache initialized at %s (max: %d files)", basePath, maxFiles)
 	return c, nil
+}
+
+// validateCachePath rejects paths that can never be a safe cache directory
+// (empty, filesystem root, home directory). These are the misconfigurations
+// that would otherwise turn a startup cache-clear into data loss.
+func validateCachePath(basePath string) error {
+	if basePath == "" {
+		return fmt.Errorf("refusing to use empty disk cache path")
+	}
+	if basePath == string(os.PathSeparator) {
+		return fmt.Errorf("refusing to use filesystem root %q as disk cache path", basePath)
+	}
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		if basePath == home || basePath == home+string(os.PathSeparator) {
+			return fmt.Errorf("refusing to use home directory %q as disk cache path", home)
+		}
+	}
+	return nil
+}
+
+// prepareCacheDir makes sure basePath is a directory the disk cache owns, then
+// clears any stale cache artifacts from a previous run.
+//
+// Ownership is tracked with a marker file: the cache only clears directories
+// that carry the marker, are empty, or contain nothing but cache artifacts
+// (an upgrade from a pre-marker layout). Any other directory is left untouched
+// and produces an error, so a misconfigured DISK_CACHE_PATH fails fast instead
+// of deleting data.
+func prepareCacheDir(basePath string, l *log.Logger) error {
+	markerPath := filepath.Join(basePath, markerFileName)
+
+	// Fresh directory: create it and claim ownership.
+	if _, err := os.Stat(basePath); os.IsNotExist(err) {
+		if err := os.MkdirAll(basePath, 0755); err != nil {
+			return fmt.Errorf("failed to create cache directory: %w", err)
+		}
+		if err := writeMarker(markerPath); err != nil {
+			return err
+		}
+		l.Debugf("cache directory created and claimed at %s", basePath)
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("failed to inspect cache directory %s: %w", basePath, err)
+	}
+
+	// Existing directory with our marker: safe to clear stale artifacts.
+	if _, err := os.Stat(markerPath); err == nil {
+		l.Infoln("clearing existing cache directory (ownership marker present)")
+		return clearCacheContents(basePath, l)
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("failed to inspect cache marker %s: %w", markerPath, err)
+	}
+
+	// No marker. Only adopt the directory if it is empty or consists solely of
+	// cache artifacts (pre-marker layout); anything else is not ours to clear.
+	entries, err := os.ReadDir(basePath)
+	if err != nil {
+		return fmt.Errorf("failed to list cache directory %s: %w", basePath, err)
+	}
+
+	for _, e := range entries {
+		name := e.Name()
+		if zDirRe.MatchString(name) || strings.HasPrefix(name, "metadata.db") ||
+			name == markerFileName || name == markerFileName+".tmp" {
+			continue
+		}
+		l.Warnf("directory %s contains unexpected entry %q — not a tile cache directory", basePath, name)
+		return fmt.Errorf("refusing to clear %s: it does not look like a tile cache directory (missing %s marker and contains unrelated files); configure a dedicated DISK_CACHE_PATH", basePath, markerFileName)
+	}
+
+	if len(entries) == 0 {
+		l.Debugf("adopting empty cache directory %s", basePath)
+	} else {
+		l.Infoln("adopting existing cache directory (pre-marker layout); clearing stale content")
+		if err := clearCacheContents(basePath, l); err != nil {
+			return err
+		}
+	}
+	return writeMarker(markerPath)
+}
+
+// clearCacheContents removes only the artifacts the disk cache itself creates:
+// z<zoom> subdirectories and the metadata SQLite database (including any
+// journal/WAL sidecar files). The configured directory and the ownership
+// marker are never removed, and unexpected entries are left in place with a
+// warning.
+func clearCacheContents(basePath string, l *log.Logger) error {
+	entries, err := os.ReadDir(basePath)
+	if err != nil {
+		return fmt.Errorf("failed to list cache directory %s: %w", basePath, err)
+	}
+
+	for _, e := range entries {
+		name := e.Name()
+		path := filepath.Join(basePath, name)
+		switch {
+		case zDirRe.MatchString(name):
+			if err := os.RemoveAll(path); err != nil {
+				return fmt.Errorf("failed to clear cache subdirectory %s: %w", path, err)
+			}
+		case strings.HasPrefix(name, "metadata.db"):
+			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+				return fmt.Errorf("failed to remove cache metadata %s: %w", path, err)
+			}
+		case name == markerFileName:
+			// Ownership marker survives the clear.
+		case name == markerFileName+".tmp":
+			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+				return fmt.Errorf("failed to remove stale marker temp file %s: %w", path, err)
+			}
+		default:
+			l.Warnf("leaving unexpected entry %s in cache directory", path)
+		}
+	}
+	return nil
+}
+
+// writeMarker claims a cache directory by writing the ownership marker file.
+// Written atomically (temp file + rename), like tile writes.
+func writeMarker(markerPath string) error {
+	if err := os.MkdirAll(filepath.Dir(markerPath), 0755); err != nil {
+		return fmt.Errorf("failed to create cache directory: %w", err)
+	}
+	tmp := markerPath + ".tmp"
+	if err := os.WriteFile(tmp, []byte(markerFileContent), 0644); err != nil {
+		return fmt.Errorf("failed to write cache marker: %w", err)
+	}
+	if err := os.Rename(tmp, markerPath); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("failed to write cache marker: %w", err)
+	}
+	return nil
 }
 
 // Get retrieves a tile from disk cache.

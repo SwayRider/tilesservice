@@ -661,3 +661,188 @@ func TestDiskTileCache_ClearPreventsStaleTiles(t *testing.T) {
 		t.Errorf("wrong data: got %q, want %q", data, freshData)
 	}
 }
+
+// TestDiskTileCache_MarkerCreatedOnInit verifies that the cache claims a fresh
+// directory with an ownership marker file.
+func TestDiskTileCache_MarkerCreatedOnInit(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cache, err := NewDiskTileCache(tmpDir, 10, testLogger())
+	if err != nil {
+		t.Fatalf("failed to create cache: %v", err)
+	}
+	_ = cache.Close()
+
+	data, err := os.ReadFile(filepath.Join(tmpDir, markerFileName))
+	if err != nil {
+		t.Fatalf("ownership marker not written: %v", err)
+	}
+	if string(data) != markerFileContent {
+		t.Errorf("unexpected marker content: %q", data)
+	}
+}
+
+// TestDiskTileCache_ClearKeepsMarker verifies that clearing on re-init leaves
+// the ownership marker in place.
+func TestDiskTileCache_ClearKeepsMarker(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cache1, err := NewDiskTileCache(tmpDir, 10, testLogger())
+	if err != nil {
+		t.Fatalf("failed to create first cache: %v", err)
+	}
+	for i := range 3 {
+		_ = cache1.SetAsync(7, 68, uint32(i), []byte("stale"))
+	}
+	time.Sleep(100 * time.Millisecond)
+	if err := cache1.Close(); err != nil {
+		t.Fatalf("failed to close first cache: %v", err)
+	}
+
+	cache2, err := NewDiskTileCache(tmpDir, 10, testLogger())
+	if err != nil {
+		t.Fatalf("failed to create second cache: %v", err)
+	}
+	defer func() { _ = cache2.Close() }()
+
+	if _, err := os.Stat(filepath.Join(tmpDir, markerFileName)); err != nil {
+		t.Errorf("ownership marker removed by cache clear: %v", err)
+	}
+}
+
+// TestDiskTileCache_RefusesForeignContent verifies that the cache refuses to
+// clear a directory it does not own and that contains unrelated files.
+func TestDiskTileCache_RefusesForeignContent(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Seed the directory with unrelated content (no ownership marker).
+	precious := filepath.Join(tmpDir, "important.txt")
+	if err := os.WriteFile(precious, []byte("do not delete"), 0644); err != nil {
+		t.Fatalf("failed to seed directory: %v", err)
+	}
+
+	if _, err := NewDiskTileCache(tmpDir, 10, testLogger()); err == nil {
+		t.Fatal("expected error when cache directory contains unrelated files, got nil")
+	}
+
+	// The foreign file must be untouched.
+	data, err := os.ReadFile(precious)
+	if err != nil {
+		t.Fatalf("foreign file was removed: %v", err)
+	}
+	if string(data) != "do not delete" {
+		t.Errorf("foreign file was modified: %q", data)
+	}
+}
+
+// TestDiskTileCache_AdoptsEmptyDirectory verifies that an existing empty
+// directory (no marker) is adopted and claimed.
+func TestDiskTileCache_AdoptsEmptyDirectory(t *testing.T) {
+	tmpDir := t.TempDir() // exists and is empty, no marker
+
+	cache, err := NewDiskTileCache(tmpDir, 10, testLogger())
+	if err != nil {
+		t.Fatalf("failed to create cache in empty dir: %v", err)
+	}
+	defer func() { _ = cache.Close() }()
+
+	if _, err := os.Stat(filepath.Join(tmpDir, markerFileName)); err != nil {
+		t.Errorf("empty directory was not claimed with marker: %v", err)
+	}
+}
+
+// TestDiskTileCache_AdoptsCacheShapedDirectory verifies that a pre-marker
+// layout (z-dirs + metadata.db, no marker) is adopted as an upgrade: cleared
+// and claimed.
+func TestDiskTileCache_AdoptsCacheShapedDirectory(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	zDir := filepath.Join(tmpDir, "z7", "68")
+	if err := os.MkdirAll(zDir, 0755); err != nil {
+		t.Fatalf("failed to seed z-dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(zDir, "34.mvt"), []byte("stale"), 0644); err != nil {
+		t.Fatalf("failed to seed tile: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "metadata.db"), []byte("fake"), 0644); err != nil {
+		t.Fatalf("failed to seed metadata: %v", err)
+	}
+
+	cache, err := NewDiskTileCache(tmpDir, 10, testLogger())
+	if err != nil {
+		t.Fatalf("failed to adopt cache-shaped directory: %v", err)
+	}
+	defer func() { _ = cache.Close() }()
+
+	if _, err := os.Stat(filepath.Join(tmpDir, markerFileName)); err != nil {
+		t.Errorf("cache-shaped directory was not claimed with marker: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(tmpDir, "z7")); !os.IsNotExist(err) {
+		t.Error("stale z-dir should have been cleared")
+	}
+}
+
+// TestDiskTileCache_RejectsUnsafePaths verifies the path-sanity guard rejects
+// empty, root, and home-directory paths without touching the filesystem.
+func TestDiskTileCache_RejectsUnsafePaths(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skipf("cannot determine home directory: %v", err)
+	}
+
+	tests := []struct {
+		name string
+		path string
+	}{
+		{"empty", ""},
+		{"root", "/"},
+		{"home", home},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := NewDiskTileCache(tt.path, 10, testLogger()); err == nil {
+				t.Errorf("expected NewDiskTileCache(%q) to fail", tt.path)
+			}
+		})
+	}
+}
+
+// TestDiskTileCache_ClearLeavesUnknownEntries verifies that clearing an owned
+// cache directory removes only cache artifacts, leaving unexpected files alone.
+func TestDiskTileCache_ClearLeavesUnknownEntries(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// First run claims the directory and writes tiles.
+	cache1, err := NewDiskTileCache(tmpDir, 10, testLogger())
+	if err != nil {
+		t.Fatalf("failed to create first cache: %v", err)
+	}
+	for i := range 2 {
+		_ = cache1.SetAsync(7, 68, uint32(i), []byte("stale"))
+	}
+	time.Sleep(100 * time.Millisecond)
+	if err := cache1.Close(); err != nil {
+		t.Fatalf("failed to close first cache: %v", err)
+	}
+
+	// Drop an unrelated file into the owned directory.
+	stray := filepath.Join(tmpDir, "notes.txt")
+	if err := os.WriteFile(stray, []byte("keep me"), 0644); err != nil {
+		t.Fatalf("failed to write stray file: %v", err)
+	}
+
+	// Second run clears the cache but must leave the stray file.
+	cache2, err := NewDiskTileCache(tmpDir, 10, testLogger())
+	if err != nil {
+		t.Fatalf("failed to create second cache: %v", err)
+	}
+	defer func() { _ = cache2.Close() }()
+
+	if _, err := os.Stat(stray); err != nil {
+		t.Errorf("stray file was removed during cache clear: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(tmpDir, "z7")); !os.IsNotExist(err) {
+		t.Error("stale z-dir should have been cleared")
+	}
+}
