@@ -79,7 +79,7 @@ Configuration is provided via environment variables or CLI flags. See `env.examp
 
 ## API Reference
 
-All endpoints are public and require no authentication.
+The `ping` endpoint is public. All other endpoints require a **service client token** with the `tiles:serve` scope (see Authorization above); direct user-JWT access is rejected with 403 — client requests go through swayrider-api, which injects its own service token.
 
 ---
 
@@ -103,7 +103,7 @@ Health check endpoint that returns HTTP 200.
 Retrieves style definition for a named style.
 
 - **Endpoint:** `GET /v1/tiles/styles/{name}`
-- **Access:** Public
+- **Access:** Service client token with `tiles:serve` scope
 
 **Parameters:**
 
@@ -122,7 +122,7 @@ Returns the map style JSON definition.
 Lists available style names.
 
 - **Endpoint:** `GET /v1/tiles/styles`
-- **Access:** Public
+- **Access:** Service client token with `tiles:serve` scope
 
 ---
 
@@ -131,7 +131,7 @@ Lists available style names.
 Retrieves a vector tile for the specified tileset and coordinates.
 
 - **Endpoint:** `GET /v1/tiles/{tileset}/{z}/{x}/{y}`
-- **Access:** Public
+- **Access:** Service client token with `tiles:serve` scope
 
 **Parameters:**
 

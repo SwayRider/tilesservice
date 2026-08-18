@@ -5,9 +5,13 @@
 //
 // # Endpoints
 //
-// All endpoints are public (no authentication required):
-//   - GET /v1/tiles/ping - Health check endpoint
-//   - GET /v1/tiles/{tileset}/{z}/{x}/{y} - Retrieve a vector tile
+// The ping endpoint is public. All other endpoints require a service client
+// JWT carrying the "tiles:serve" scope; user JWTs are rejected (client
+// requests go through swayrider-api, which injects its own service token):
+//   - GET /v1/tiles/ping - Health check endpoint (public)
+//   - GET /v1/tiles/{tileset}/{z}/{x}/{y} - Retrieve a vector tile (requires tiles:serve scope)
+//   - GET /v1/tiles/styles - List map styles (requires tiles:serve scope)
+//   - GET /v1/tiles/styles/{name} - Retrieve a map style (requires tiles:serve scope)
 package main
 
 import (
@@ -22,12 +26,12 @@ import (
 
 	"github.com/rs/cors"
 	"github.com/swayrider/grpcclients/authclient"
-	"github.com/swayrider/tilesservice/internal/server"
-	"github.com/swayrider/tilesservice/internal/tilecache"
-	"github.com/swayrider/tilesservice/internal/tileindex"
 	"github.com/swayrider/swlib/app"
 	"github.com/swayrider/swlib/jwt"
 	log "github.com/swayrider/swlib/logger"
+	"github.com/swayrider/tilesservice/internal/server"
+	"github.com/swayrider/tilesservice/internal/tilecache"
+	"github.com/swayrider/tilesservice/internal/tileindex"
 )
 
 /*
@@ -129,7 +133,9 @@ func refreshJWTKeys(clt *authclient.Client, lg *log.Logger) {
 }
 
 // requireTilesAuth is an HTTP middleware that validates a JWT and enforces the
-// "tiles:serve" scope for service clients. Regular user JWTs are accepted as-is.
+// "tiles:serve" scope. Only service client tokens carrying tiles:serve are
+// accepted; user JWTs are rejected (client requests go through swayrider-api,
+// which injects its own service token).
 func requireTilesAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		auth := r.Header.Get("Authorization")
@@ -184,7 +190,6 @@ func hasTilesScope(scopes []string) bool {
 	}
 	return false
 }
-
 
 func main() {
 	stdConfigFields :=
@@ -356,14 +361,14 @@ func startHTTPServer(a app.App) error {
 		}
 	})
 
-	// Style endpoints — require JWT with tiles:serve scope (or user JWT).
+	// Style endpoints — require a service JWT with the tiles:serve scope.
 	// Registered before the tile wildcard route to ensure the static
 	// /v1/tiles/styles prefix takes priority.
 	styleHandler := server.NewStyleHTTPHandler(stylesPath, tilesBaseURL, a.Logger())
 	mux.Handle("GET /v1/tiles/styles", requireTilesAuth(styleHandler))
 	mux.Handle("GET /v1/tiles/styles/{name}", requireTilesAuth(styleHandler))
 
-	// Tile endpoint — requires JWT with tiles:serve scope (or user JWT).
+	// Tile endpoint — requires a service JWT with the tiles:serve scope.
 	tileHandler := server.NewTileHTTPHandler(idx, tileCache, a.Logger())
 	mux.Handle("GET /v1/tiles/{tileset}/{z}/{x}/{y}", requireTilesAuth(tileHandler))
 
