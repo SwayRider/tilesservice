@@ -3,3 +3,5 @@
 .DS_Store
 *.md
 local.env
+.github
+tileviewer

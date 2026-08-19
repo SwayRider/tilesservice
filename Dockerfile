@@ -34,8 +34,9 @@ RUN if [ "${TARGETARCH}" = "amd64" ]; then \
     go mod download && \
     go build -o tilesservice ./cmd/tilesservice/main.go
 
-# Runtime stage
-FROM --platform=$TARGETPLATFORM debian:bookworm-slim
+# Runtime stage. Pinned to a dated bookworm tag (rather than the mutable
+# bookworm-slim alias) so builds are reproducible.
+FROM --platform=$TARGETPLATFORM debian:bookworm-20260805-slim
 RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=builder /app/tilesservice .
