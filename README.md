@@ -146,7 +146,7 @@ Retrieves a vector tile for the specified tileset and coordinates.
 
 | Parameter | Type | Description |
 | --------- | ---- | ----------- |
-| `tileset` | string | Tileset name (e.g., "base", "roads") |
+| `tileset` | string | Tileset name (e.g., "base", "roads") — currently accepted but ignored; reserved for future multi-tileset support (only one tileset is served) |
 | `z` | uint32 | Zoom level (0-16) |
 | `x` | uint32 | Tile X coordinate |
 | `y` | uint32 | Tile Y coordinate |
@@ -174,14 +174,10 @@ tiles/
 │   ├── N20_E010.mbtiles
 │   ├── N30_W010.mbtiles
 │   └── ...
-├── L2/                           # Regional tiles (zoom 11-13)
+├── L2/                           # Regional+local tiles (zoom 11-16)
 │   ├── N20_E000.mbtiles
 │   ├── N20_E010.mbtiles
 │   └── ...
-└── L3/                           # Local tiles (zoom 14-16)
-    ├── N20_E000.mbtiles
-    ├── N20_E010.mbtiles
-    └── ...
 ```
 
 ### Tile Layers
@@ -190,12 +186,11 @@ tiles/
 | ----- | ----------- | -------- | ------- |
 | L0 | 0-6 | World | World backdrop, country boundaries, major features |
 | L1 | 7-10 | 10° × 10° grid | Large roads (motorways, trunk roads) |
-| L2 | 11-13 | 10° × 10° grid | Regional roads (primary, secondary) |
-| L3 | 14-16 | 10° × 10° grid | Local roads (tertiary, residential) |
+| L2 | 11-16 | 10° × 10° grid | All roads (unsimplified) |
 
 ### File Naming Convention
 
-Files in L1, L2, and L3 follow the naming pattern: `{lat}_{lon}.mbtiles`
+Files in L1 and L2 follow the naming pattern: `{lat}_{lon}.mbtiles`
 
 - `lat`: Latitude prefix (`N` for north, `S` for south) followed by degrees (e.g., `N20`, `S10`)
 - `lon`: Longitude prefix (`E` for east, `W` for west) followed by degrees (e.g., `E000`, `W120`)
