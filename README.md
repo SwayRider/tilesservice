@@ -217,6 +217,19 @@ go run ./cmd/tilesservice
 make container-build
 ```
 
+### Tagging
+
+Tags are derived from the git state of the checkout:
+
+| Branch / state | Tags applied |
+|----------------|--------------|
+| Version-tagged commit (`v1.2.3`) | `v1.2.3`, `latest` |
+| `main` (untagged) | `v{last}-{date}-dev-b{N}`, `dev-latest` |
+| Other branch | `v{last}-{branch}-b{N}` |
+| Detached HEAD | `v{last}-{sha}-b{N}` |
+
+Non-release builds get an incrementing build number (`-b{N}`) so repeated builds of the same branch don't overwrite each other. The number comes from querying the registry for the highest existing `-b{N}` tag on the same base tag and adding 1; the build fails if the registry can't be reached. Release builds are immutable and never get a build number.
+
 ### FORCE_DEV_LATEST
 
 By default, a release build on a version-tagged commit (e.g., `v1.2.3`) pushes two tags: the version tag and `latest`. Set `FORCE_DEV_LATEST=1` to additionally push the `dev-latest` floating tag:

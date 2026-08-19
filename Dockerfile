@@ -36,7 +36,7 @@ RUN if [ "${TARGETARCH}" = "amd64" ]; then \
 
 # Runtime stage. Pinned to a dated bookworm tag (rather than the mutable
 # bookworm-slim alias) so builds are reproducible.
-FROM --platform=$TARGETPLATFORM debian:bookworm-20260805-slim
+FROM --platform=$TARGETPLATFORM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=builder /app/tilesservice .
