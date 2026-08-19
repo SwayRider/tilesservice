@@ -35,6 +35,7 @@ type CompressedTileCache struct {
 	stopCh         chan struct{}                 // Signal to stop background worker
 	evictionTicker *time.Ticker                  // Periodic eviction trigger
 	l              *log.Logger                   // Logger for debug output
+	closeOnce      sync.Once                     // Makes Close idempotent
 }
 
 // NewCompressedTileCache creates a new compressed tile cache with the specified maximum size.
@@ -188,9 +189,13 @@ func (c *CompressedTileCache) Set(z, x, y uint32, data []byte) {
 }
 
 // Close stops the background eviction worker and cleans up resources.
+// It is idempotent: subsequent calls are no-ops (a second Close would
+// otherwise panic on a closed channel).
 func (c *CompressedTileCache) Close() error {
-	if c.stopCh != nil {
-		close(c.stopCh)
-	}
+	c.closeOnce.Do(func() {
+		if c.stopCh != nil {
+			close(c.stopCh)
+		}
+	})
 	return nil
 }

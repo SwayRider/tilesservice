@@ -109,6 +109,19 @@ func TestCompressedTileCache_LRU(t *testing.T) {
 	}
 }
 
+// TestCompressedTileCache_CloseIdempotent verifies that Close can be called
+// multiple times without panicking on the closed stop channel.
+func TestCompressedTileCache_CloseIdempotent(t *testing.T) {
+	cache := NewCompressedTileCache(10, testLogger())
+	if err := cache.Close(); err != nil {
+		t.Fatalf("first Close() error = %v", err)
+	}
+	// A second Close must not panic.
+	if err := cache.Close(); err != nil {
+		t.Fatalf("second Close() error = %v", err)
+	}
+}
+
 // TestCompressedTileCache_DisabledCache tests cache with size 0 (disabled).
 func TestCompressedTileCache_DisabledCache(t *testing.T) {
 	cache := NewCompressedTileCache(0, testLogger())
