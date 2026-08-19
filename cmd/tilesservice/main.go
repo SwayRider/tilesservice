@@ -179,7 +179,11 @@ func authServiceClientCtor(a app.App) grpcclients.Client {
 	return clnt
 }
 
-func main() {
+// newApp builds the application with its full configuration, service clients,
+// initializers, and background routines. It does not parse config or run the
+// lifecycle: main() calls Run, while tests build an app and drive its
+// initializers and HTTP server directly.
+func newApp() app.App {
 	stdConfigFields :=
 		app.BackendServiceFields |
 			app.LoggerFields
@@ -191,7 +195,7 @@ func main() {
 	// 15-second fetch timeout, retains last known-good keys on failure).
 	jwtKeyCache := jwtkeys.New(application.Logger())
 
-	application = application.
+	return application.
 		WithDefaultConfigFields(stdConfigFields, app.FlagGroupOverrides{}).
 		WithServiceClients(
 			app.NewServiceClient("authservice", authServiceClientCtor),
@@ -223,8 +227,10 @@ func main() {
 		WithInitializers(initializeTileIndex, app.JWTKeysInitializer(jwtKeyCache)).
 		WithBackgroundRoutines(app.JWTKeysFetcher(jwtKeyCache)).
 		WithHTTP(startHTTPServer, stopHTTPServer)
+}
 
-	application.Run()
+func main() {
+	newApp().Run()
 }
 
 // startHTTPServer creates and starts the HTTP server for tile serving.

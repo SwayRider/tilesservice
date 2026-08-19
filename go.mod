@@ -3,18 +3,18 @@ module github.com/swayrider/tilesservice
 go 1.26.2
 
 require (
+	github.com/golang-jwt/jwt/v5 v5.3.0
 	github.com/mattn/go-sqlite3 v1.14.42
 	github.com/paulmach/orb v0.13.0
 	github.com/rs/cors v1.11.1
 	github.com/swayrider/grpcclients v0.1.7-0.20260818115456-6d4fa25ec6fa
-	github.com/swayrider/swlib v0.1.8-0.20260818115652-951dd3fd85de
+	github.com/swayrider/swlib v0.1.8-0.20260819074911-e39e0c438e4c
 )
 
 require (
 	github.com/armon/go-metrics v0.4.1 // indirect
 	github.com/fatih/color v1.16.0 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
-	github.com/golang-jwt/jwt/v5 v5.3.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.29.0 // indirect
 	github.com/hashicorp/consul/api v1.32.1 // indirect

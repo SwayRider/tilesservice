@@ -196,8 +196,8 @@ github.com/swayrider/grpcclients v0.1.7-0.20260818115456-6d4fa25ec6fa h1:HSK4nFc
 github.com/swayrider/grpcclients v0.1.7-0.20260818115456-6d4fa25ec6fa/go.mod h1:jLgXaOj4wlPJvLqfRdS3ffm5nV1J0vHvclSgwjr2eow=
 github.com/swayrider/protos v0.1.4-0.20260817195903-bbe22709cfce h1:xAKnX9VTG/hvzybf7LdkUgkCYuWzzoE6sAOhAkL+bKg=
 github.com/swayrider/protos v0.1.4-0.20260817195903-bbe22709cfce/go.mod h1:e5VCOSgkeRKptyLYV0l351sdHpuzhnpN81UZT8LOXRg=
-github.com/swayrider/swlib v0.1.8-0.20260818115652-951dd3fd85de h1:HFgcr7Dmz6TO1NbB7+RcQRFnU6lS6d89sSENJxl240Q=
-github.com/swayrider/swlib v0.1.8-0.20260818115652-951dd3fd85de/go.mod h1:g7se+wt4+uE7JT2kyjj4a0TCZnwnkvfq7FmmmFQv7II=
+github.com/swayrider/swlib v0.1.8-0.20260819074911-e39e0c438e4c h1:0h6nFjb8lYxgpZ9RGjzqRlQpMLxQ4hO6da2ht1t2s6Y=
+github.com/swayrider/swlib v0.1.8-0.20260819074911-e39e0c438e4c/go.mod h1:g7se+wt4+uE7JT2kyjj4a0TCZnwnkvfq7FmmmFQv7II=
 github.com/tv42/httpunix v0.0.0-20150427012821-b75d8614f926/go.mod h1:9ESjWnEqriFuLhtthL60Sar/7RFoluCcXsuvEwTV5KM=
 github.com/yuin/goldmark v1.1.27/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9decYSb74=
 github.com/yuin/goldmark v1.2.1/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9decYSb74=
