@@ -1,8 +1,8 @@
 // http_style.go implements an HTTP handler for serving map styles.
 //
 // This handler serves MapLibre GL JS style JSON files from a configured
-// directory. It also provides a listing endpoint to discover available styles.
-// The "light" and "dark" styles are always advertised as available.
+// directory. It also provides a listing endpoint that advertises only the
+// styles that actually exist on disk.
 
 package server
 
@@ -14,7 +14,9 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"text/template"
+	"time"
 
 	log "github.com/swayrider/swlib/logger"
 )
@@ -42,18 +44,32 @@ type StyleHTTPHandler struct {
 	stylesDir    string
 	tilesBaseURL string
 	l            *log.Logger
+
+	// tmplCache caches parsed style templates keyed by style name, along with
+	// the file mtime they were parsed from, so edits are picked up without a
+	// restart and files are not re-read and re-parsed on every request.
+	tmplMu    sync.Mutex
+	tmplCache map[string]styleTemplate
+}
+
+// styleTemplate pairs a parsed template with the file modification time it
+// was parsed from, for mtime-based cache invalidation.
+type styleTemplate struct {
+	tmpl    *template.Template
+	modTime time.Time
 }
 
 // NewStyleHTTPHandler creates a new handler for serving map styles.
 // stylesDir is the directory containing style JSON files. If empty,
-// the listing endpoint returns only the default styles and individual
-// style requests return 404.
+// the listing endpoint returns an empty list and individual style
+// requests return 404.
 // tilesBaseURL is substituted for {{.TilesBaseURL}} in style templates.
 func NewStyleHTTPHandler(stylesDir string, tilesBaseURL string, l *log.Logger) *StyleHTTPHandler {
 	return &StyleHTTPHandler{
 		stylesDir:    stylesDir,
 		tilesBaseURL: tilesBaseURL,
 		l:            l.Derive(log.WithComponent("StyleHTTPHandler")),
+		tmplCache:    make(map[string]styleTemplate),
 	}
 }
 
@@ -91,7 +107,7 @@ func (h *StyleHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleList returns all available map styles as a JSON array.
-// The "light" and "dark" default styles are always included.
+// Only styles that exist on disk are included.
 func (h *StyleHTTPHandler) handleList(w http.ResponseWriter, r *http.Request) {
 	styles := h.listStyles()
 
@@ -119,13 +135,31 @@ func (h *StyleHTTPHandler) handleGetStyle(w http.ResponseWriter, r *http.Request
 
 	filePath := filepath.Join(h.stylesDir, name+".json")
 
-	data, err := os.ReadFile(filePath)
+	// Stat first: a missing file is a 404, and the mtime drives the template
+	// cache below.
+	info, err := os.Stat(filePath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			h.l.Debugf("style not found: %s", name)
 			http.Error(w, "Style not found", http.StatusNotFound)
 			return
 		}
+		h.l.Errorf("failed to read style %s: %v", name, err)
+		http.Error(w, "Failed to read style", http.StatusInternalServerError)
+		return
+	}
+
+	// Serve the cached parsed template when the file is unchanged.
+	h.tmplMu.Lock()
+	cached, ok := h.tmplCache[name]
+	h.tmplMu.Unlock()
+	if ok && cached.modTime.Equal(info.ModTime()) {
+		h.renderStyle(w, name, cached.tmpl)
+		return
+	}
+
+	data, err := os.ReadFile(filePath)
+	if err != nil {
 		h.l.Errorf("failed to read style %s: %v", name, err)
 		http.Error(w, "Failed to read style", http.StatusInternalServerError)
 		return
@@ -138,6 +172,16 @@ func (h *StyleHTTPHandler) handleGetStyle(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	h.tmplMu.Lock()
+	h.tmplCache[name] = styleTemplate{tmpl: tmpl, modTime: info.ModTime()}
+	h.tmplMu.Unlock()
+
+	h.renderStyle(w, name, tmpl)
+}
+
+// renderStyle executes a parsed style template and writes the response.
+// Parsed templates are safe for concurrent execution.
+func (h *StyleHTTPHandler) renderStyle(w http.ResponseWriter, name string, tmpl *template.Template) {
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, styleTemplateData{TilesBaseURL: h.tilesBaseURL}); err != nil {
 		h.l.Errorf("failed to execute style template %s: %v", name, err)
@@ -154,42 +198,32 @@ func (h *StyleHTTPHandler) handleGetStyle(w http.ResponseWriter, r *http.Request
 	}
 }
 
-// listStyles scans the styles directory and returns all available styles.
-// The "light" and "dark" defaults are always present in the result,
-// even if the directory is empty or not configured.
+// listStyles scans the styles directory and returns the styles that are
+// actually available on disk. Only existing .json files are advertised, so a
+// client never follows the listing into a 404. An empty or unreadable
+// directory yields an empty list.
 func (h *StyleHTTPHandler) listStyles() []StyleInfo {
-	defaults := []string{"light", "dark"}
-	seen := make(map[string]bool)
 	var styles []StyleInfo
 
-	// Add defaults first
-	for _, name := range defaults {
-		seen[name] = true
-		styles = append(styles, StyleInfo{Name: name})
+	if h.stylesDir == "" {
+		return styles
 	}
 
-	// Scan directory for additional styles
-	if h.stylesDir != "" {
-		entries, err := os.ReadDir(h.stylesDir)
-		if err != nil {
-			h.l.Warnf("failed to read styles directory %s: %v", h.stylesDir, err)
-			return styles
-		}
+	entries, err := os.ReadDir(h.stylesDir)
+	if err != nil {
+		h.l.Warnf("failed to read styles directory %s: %v", h.stylesDir, err)
+		return styles
+	}
 
-		for _, entry := range entries {
-			if entry.IsDir() {
-				continue
-			}
-			fname := entry.Name()
-			if !strings.HasSuffix(fname, ".json") {
-				continue
-			}
-			name := strings.TrimSuffix(fname, ".json")
-			if !seen[name] {
-				seen[name] = true
-				styles = append(styles, StyleInfo{Name: name})
-			}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
 		}
+		fname := entry.Name()
+		if !strings.HasSuffix(fname, ".json") {
+			continue
+		}
+		styles = append(styles, StyleInfo{Name: strings.TrimSuffix(fname, ".json")})
 	}
 
 	return styles
