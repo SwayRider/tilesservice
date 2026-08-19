@@ -97,6 +97,15 @@ func (h *TileHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate x/y are within [0, 2^z). Out-of-range coordinates would
+	// underflow the XYZ→TMS conversion in the reader and produce garbage
+	// grid-file lookups, so reject them before doing any work.
+	maxCoord := uint64(1) << z
+	if x >= maxCoord || y >= maxCoord {
+		http.Error(w, "Tile coordinate out of range for zoom level", http.StatusBadRequest)
+		return
+	}
+
 	// Check if tile index is configured
 	if h.idx == nil {
 		h.l.Errorln("tile index not configured")
@@ -111,6 +120,7 @@ func (h *TileHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			// Debug log for missing tile
 			h.l.Debugf("tile not found in MBTiles z=%d x=%d y=%d", z, x, y)
 			// Return 204 No Content for missing tiles (standard practice)
+			w.Header().Set("Vary", "Accept-Encoding")
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
@@ -122,9 +132,13 @@ func (h *TileHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Debug log for tile fetched from MBTiles
 	h.l.Debugf("fetched tile from MBTiles z=%d x=%d y=%d size=%d", z, x, y, len(tileData))
 
-	// Set common headers
+	// Set common headers. Vary: Accept-Encoding is required on every tile
+	// response: the payload (gzip vs raw) is selected based on the request's
+	// Accept-Encoding, and without it a shared cache could serve a gzip
+	// payload to a client that cannot decode it.
 	w.Header().Set("Content-Type", ContentTypeMVT)
 	w.Header().Set("Cache-Control", "public, max-age=86400") // Cache for 24 hours
+	w.Header().Set("Vary", "Accept-Encoding")
 
 	// Check if tile is already compressed
 	if compression.IsGzipped(tileData) {
@@ -156,7 +170,6 @@ func (h *TileHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if compressed, ok := h.cache.Get(uint32(z), uint32(x), uint32(y)); ok {
 		w.Header().Set("Content-Encoding", "gzip")
 		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(compressed)))
-		w.Header().Set("Vary", "Accept-Encoding")
 		w.WriteHeader(http.StatusOK)
 		if _, err := w.Write(compressed); err != nil {
 			h.l.Debugf("failed to write cached tile: %v", err)
@@ -186,7 +199,6 @@ func (h *TileHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Serve compressed
 	w.Header().Set("Content-Encoding", "gzip")
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(compressed)))
-	w.Header().Set("Vary", "Accept-Encoding")
 	w.WriteHeader(http.StatusOK)
 	if _, err := w.Write(compressed); err != nil {
 		h.l.Debugf("failed to write compressed tile: %v", err)

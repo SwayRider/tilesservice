@@ -60,20 +60,29 @@ func signToken(t *testing.T, privPEM string, claims jwt.SwayRiderClaims) string 
 	return string(token)
 }
 
-// setJWTKeys replaces the cached JWT public keys for the duration of a test.
-func setJWTKeys(t *testing.T, keys ...string) {
-	t.Helper()
+// fakeKeyCache is a test double for KeyCache backed by the given public
+// keys. Verify delegates to jwt.VerifyToken, matching the production path
+// taken by *jwtkeys.Cache.
+type fakeKeyCache struct {
+	keys []string
+}
 
-	jwtKeyCache.mu.Lock()
-	old := jwtKeyCache.keys
-	jwtKeyCache.keys = keys
-	jwtKeyCache.mu.Unlock()
+func (f *fakeKeyCache) Keys() []string {
+	return f.keys
+}
 
-	t.Cleanup(func() {
-		jwtKeyCache.mu.Lock()
-		jwtKeyCache.keys = old
-		jwtKeyCache.mu.Unlock()
-	})
+func (f *fakeKeyCache) Verify(token string) (*jwt.Claims, error) {
+	var (
+		claims  *jwt.Claims
+		lastErr error
+	)
+	for _, key := range f.keys {
+		claims, lastErr = jwt.VerifyToken(token, key, jwt.VerifyDefault)
+		if lastErr == nil {
+			return claims, nil
+		}
+	}
+	return nil, lastErr
 }
 
 // TestRequireTilesAuth exercises the auth middleware: malformed requests are
@@ -106,13 +115,13 @@ func TestRequireTilesAuth(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			setJWTKeys(t, tt.keys...)
+			keyCache := &fakeKeyCache{keys: tt.keys}
 
 			probe := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusOK)
 				_, _ = w.Write([]byte("ok"))
 			})
-			handler := requireTilesAuth(probe)
+			handler := requireTilesAuth(keyCache, probe)
 
 			req := httptest.NewRequest(http.MethodGet, "/v1/tiles/base/10/512/384", nil)
 			if tt.authHeader != "" {

@@ -275,6 +275,30 @@ func TestGetTile(t *testing.T) {
 			t.Errorf("GetTile() error = %v, want ErrTileNotFound", err)
 		}
 	})
+
+	t.Run("rejects out-of-range coordinates", func(t *testing.T) {
+		// y >= 2^z would underflow the XYZ→TMS flip; x >= 2^z can never exist;
+		// z >= 32 wraps 1<<z to 0. All must return ErrTileNotFound without
+		// touching the database.
+		tests := []struct {
+			name string
+			z, x, y uint32
+		}{
+			{"y equals 2^z", 0, 0, 1},
+			{"y greater than 2^z", 1, 0, 2},
+			{"x equals 2^z", 1, 2, 0},
+			{"x greater than 2^z", 16, 65536, 0},
+			{"zoom wraps 1<<z", 32, 0, 0},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				_, err := reader.GetTile(tt.z, tt.x, tt.y)
+				if err != ErrTileNotFound {
+					t.Errorf("GetTile(%d,%d,%d) error = %v, want ErrTileNotFound", tt.z, tt.x, tt.y, err)
+				}
+			})
+		}
+	})
 }
 
 func TestClose(t *testing.T) {

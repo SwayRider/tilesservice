@@ -32,7 +32,7 @@ tilesservice only accepts **service client tokens** with the `tiles:serve` scope
 | `GET /v1/tiles/styles/{name}` | Service client token with `tiles:serve` scope |
 | `GET /v1/tiles/{tileset}/{z}/{x}/{y}` | Service client token with `tiles:serve` scope |
 
-AUTHSERVICE_HOST and AUTHSERVICE_PORT must be configured so the service can fetch JWT public keys for token validation.
+AUTHSERVICE_HOST and AUTHSERVICE_PORT must be configured so the service can fetch JWT public keys for token validation. Keys are fetched once at startup and then refreshed in the background (default every 300s — see JWT Key Refresh below); a failed refresh never clears the last known-good keys, and each fetch is bounded by a timeout.
 
 ---
 
@@ -76,6 +76,15 @@ Configuration is provided via environment variables or CLI flags. See `env.examp
 | `SERVICE_HOST` | `-service-host` | | Public hostname (used in style tile URLs) |
 | `SERVICE_PORT` | `-service-port` | | Public port (optional) |
 | `SERVICE_PREFIX` | `-service-prefix` | | URL prefix (e.g. /v1/tiles) |
+
+### JWT Key Refresh
+
+| Environment Variable | CLI Flag | Default | Description |
+| -------------------- | -------- | ------- | ----------- |
+| `AUTHSERVICE_HOST` | `-authservice-host` | | Auth service host for JWT public key discovery |
+| `AUTHSERVICE_PORT` | `-authservice-port` | 8081 | Auth service gRPC port |
+| `JWT_KEYS_REFRESH_INTERVAL_SECS` | `-jwt-keys-refresh-interval-secs` | 300 | How often (seconds) to refresh JWT public keys from authservice |
+| `JWT_KEYS_FETCH_TIMEOUT_SECS` | `-jwt-keys-fetch-timeout-secs` | 15 | Upper bound (seconds) on a single public-key fetch |
 
 ## API Reference
 
