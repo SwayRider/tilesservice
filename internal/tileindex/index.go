@@ -187,8 +187,8 @@ func (idx *TileIndex) getOverlappingFilePaths(z, x, y uint32) []string {
 }
 
 // tileCornerToLatLon converts a tile corner coordinate to lat/lon.
-// Unlike tileToLatLon which returns the SW corner, this returns the exact
-// corner at the given (z, x, y) position.
+// It returns the exact corner at the given (z, x, y) position; the
+// southwest corner of a tile is (z, x, y+1).
 func tileCornerToLatLon(z, x, y uint32) (lat, lon float64) {
 	n := float64(uint32(1) << z)
 
@@ -254,39 +254,6 @@ func zoomToLayer(z uint32) Layer {
 	default:
 		return LayerL2  // Z11-16 uses L2 (consolidated regional+local)
 	}
-}
-
-// tileToLatLon converts XYZ tile coordinates to the SOUTHWEST corner of the tile.
-//
-// In the XYZ tile coordinate system:
-//   - x increases eastward (left to right)
-//   - y increases SOUTHWARD (top to bottom, y=0 is at the north pole)
-//
-// A tile at (z, x, y) has four corners:
-//   - Northwest (top-left):     x,   y
-//   - Northeast (top-right):    x+1, y
-//   - Southwest (bottom-left):  x,   y+1  ← this is what we return
-//   - Southeast (bottom-right): x+1, y+1
-//
-// The southwest corner is at:
-//   - Western edge:  longitude at x (not x+1)
-//   - Southern edge: latitude at y+1 (not y, since y increases southward)
-//
-// We use the southwest corner because it matches the MBTiles file naming
-// convention, where filenames like "N50_E000.mbtiles" represent the
-// southwest corner of the 10° grid cell.
-func tileToLatLon(z, x, y uint32) (lat, lon float64) {
-	n := float64(uint32(1) << z)
-
-	// Longitude: western edge of tile (x, not x+1)
-	lon = float64(x)/n*360.0 - 180.0
-
-	// Latitude: southern edge of tile (y+1, not y, because y increases southward)
-	// Uses inverse Web Mercator projection
-	latRad := math.Atan(math.Sinh(math.Pi * (1 - 2*float64(y+1)/n)))
-	lat = latRad * 180.0 / math.Pi
-
-	return lat, lon
 }
 
 // snapToGrid snaps geographic coordinates to the 10° grid used for file naming.

@@ -36,6 +36,26 @@ else
   EXTRA_TAG    :=
 endif
 
+# Non-release builds get an incrementing build number (-b<N>) derived from the
+# registry's existing tags, so repeated builds don't overwrite each other.
+# Release builds (version tag on HEAD) stay immutable — no build number.
+ifneq ($(VERSION_TAG),)
+  # release build: no build number
+else
+  BUILD_NUMBER := $(shell \
+    TOKEN=$$(curl -s --max-time 15 "https://ghcr.io/token?scope=repository:swayrider/$(SERVICE):pull&service=ghcr.io" | sed -E 's/.*"token":"([^"]+)".*/\1/'); \
+    if [ -z "$$TOKEN" ]; then echo ""; exit 1; fi; \
+    TAG_LIST=$$(curl -s --max-time 15 -H "Authorization: Bearer $$TOKEN" "https://ghcr.io/v2/swayrider/$(SERVICE)/tags/list"); \
+    if [ -z "$$TAG_LIST" ]; then echo ""; exit 1; fi; \
+    LAST=$$(echo "$$TAG_LIST" | grep -oE '$(BASE_TAG)-b[0-9]+' | grep -oE '[0-9]+$$' | sort -n | tail -1); \
+    if [ -z "$$LAST" ]; then echo 1; else echo $$(( $$LAST + 1 )); fi \
+  )
+  ifeq ($(BUILD_NUMBER),)
+    $(error Could not determine build number for $(IMAGE):$(BASE_TAG) — aborting (registry unreachable?))
+  endif
+  BASE_TAG := $(BASE_TAG)-b$(BUILD_NUMBER)
+endif
+
 TAGS := -t $(IMAGE):$(BASE_TAG)
 ifneq ($(FLOATING_TAG),)
   TAGS := $(TAGS) -t $(IMAGE):$(FLOATING_TAG)

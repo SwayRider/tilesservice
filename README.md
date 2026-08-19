@@ -32,7 +32,7 @@ tilesservice only accepts **service client tokens** with the `tiles:serve` scope
 | `GET /v1/tiles/styles/{name}` | Service client token with `tiles:serve` scope |
 | `GET /v1/tiles/{tileset}/{z}/{x}/{y}` | Service client token with `tiles:serve` scope |
 
-AUTHSERVICE_HOST and AUTHSERVICE_PORT must be configured so the service can fetch JWT public keys for token validation.
+AUTHSERVICE_HOST and AUTHSERVICE_PORT must be configured so the service can fetch JWT public keys for token validation. Keys are fetched once at startup and then refreshed in the background (default every 300s — see JWT Key Refresh below); a failed refresh never clears the last known-good keys, and each fetch is bounded by a timeout.
 
 ---
 
@@ -77,9 +77,18 @@ Configuration is provided via environment variables or CLI flags. See `env.examp
 | `SERVICE_PORT` | `-service-port` | | Public port (optional) |
 | `SERVICE_PREFIX` | `-service-prefix` | | URL prefix (e.g. /v1/tiles) |
 
+### JWT Key Refresh
+
+| Environment Variable | CLI Flag | Default | Description |
+| -------------------- | -------- | ------- | ----------- |
+| `AUTHSERVICE_HOST` | `-authservice-host` | | Auth service host for JWT public key discovery |
+| `AUTHSERVICE_PORT` | `-authservice-port` | 8081 | Auth service gRPC port |
+| `JWT_KEYS_REFRESH_INTERVAL_SECS` | `-jwt-keys-refresh-interval-secs` | 300 | How often (seconds) to refresh JWT public keys from authservice |
+| `JWT_KEYS_FETCH_TIMEOUT_SECS` | `-jwt-keys-fetch-timeout-secs` | 15 | Upper bound (seconds) on a single public-key fetch |
+
 ## API Reference
 
-All endpoints are public and require no authentication.
+The `ping` endpoint is public. All other endpoints require a **service client token** with the `tiles:serve` scope (see Authorization above); direct user-JWT access is rejected with 403 — client requests go through swayrider-api, which injects its own service token.
 
 ---
 
@@ -103,7 +112,7 @@ Health check endpoint that returns HTTP 200.
 Retrieves style definition for a named style.
 
 - **Endpoint:** `GET /v1/tiles/styles/{name}`
-- **Access:** Public
+- **Access:** Service client token with `tiles:serve` scope
 
 **Parameters:**
 
@@ -122,7 +131,7 @@ Returns the map style JSON definition.
 Lists available style names.
 
 - **Endpoint:** `GET /v1/tiles/styles`
-- **Access:** Public
+- **Access:** Service client token with `tiles:serve` scope
 
 ---
 
@@ -131,13 +140,13 @@ Lists available style names.
 Retrieves a vector tile for the specified tileset and coordinates.
 
 - **Endpoint:** `GET /v1/tiles/{tileset}/{z}/{x}/{y}`
-- **Access:** Public
+- **Access:** Service client token with `tiles:serve` scope
 
 **Parameters:**
 
 | Parameter | Type | Description |
 | --------- | ---- | ----------- |
-| `tileset` | string | Tileset name (e.g., "base", "roads") |
+| `tileset` | string | Tileset name (e.g., "base", "roads") — currently accepted but ignored; reserved for future multi-tileset support (only one tileset is served) |
 | `z` | uint32 | Zoom level (0-16) |
 | `x` | uint32 | Tile X coordinate |
 | `y` | uint32 | Tile Y coordinate |
@@ -165,14 +174,10 @@ tiles/
 │   ├── N20_E010.mbtiles
 │   ├── N30_W010.mbtiles
 │   └── ...
-├── L2/                           # Regional tiles (zoom 11-13)
+├── L2/                           # Regional+local tiles (zoom 11-16)
 │   ├── N20_E000.mbtiles
 │   ├── N20_E010.mbtiles
 │   └── ...
-└── L3/                           # Local tiles (zoom 14-16)
-    ├── N20_E000.mbtiles
-    ├── N20_E010.mbtiles
-    └── ...
 ```
 
 ### Tile Layers
@@ -181,12 +186,11 @@ tiles/
 | ----- | ----------- | -------- | ------- |
 | L0 | 0-6 | World | World backdrop, country boundaries, major features |
 | L1 | 7-10 | 10° × 10° grid | Large roads (motorways, trunk roads) |
-| L2 | 11-13 | 10° × 10° grid | Regional roads (primary, secondary) |
-| L3 | 14-16 | 10° × 10° grid | Local roads (tertiary, residential) |
+| L2 | 11-16 | 10° × 10° grid | All roads (unsimplified) |
 
 ### File Naming Convention
 
-Files in L1, L2, and L3 follow the naming pattern: `{lat}_{lon}.mbtiles`
+Files in L1 and L2 follow the naming pattern: `{lat}_{lon}.mbtiles`
 
 - `lat`: Latitude prefix (`N` for north, `S` for south) followed by degrees (e.g., `N20`, `S10`)
 - `lon`: Longitude prefix (`E` for east, `W` for west) followed by degrees (e.g., `E000`, `W120`)
@@ -212,6 +216,19 @@ go run ./cmd/tilesservice
 # Build container (from tilesservice/ directory)
 make container-build
 ```
+
+### Tagging
+
+Tags are derived from the git state of the checkout:
+
+| Branch / state | Tags applied |
+|----------------|--------------|
+| Version-tagged commit (`v1.2.3`) | `v1.2.3`, `latest` |
+| `main` (untagged) | `v{last}-{date}-dev-b{N}`, `dev-latest` |
+| Other branch | `v{last}-{branch}-b{N}` |
+| Detached HEAD | `v{last}-{sha}-b{N}` |
+
+Non-release builds get an incrementing build number (`-b{N}`) so repeated builds of the same branch don't overwrite each other. The number comes from querying the registry for the highest existing `-b{N}` tag on the same base tag and adding 1; the build fails if the registry can't be reached. Release builds are immutable and never get a build number.
 
 ### FORCE_DEV_LATEST
 

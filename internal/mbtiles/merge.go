@@ -5,6 +5,7 @@ package mbtiles
 import (
 	"bytes"
 	"compress/gzip"
+	"fmt"
 	"io"
 
 	"github.com/paulmach/orb/encoding/mvt"
@@ -63,6 +64,14 @@ func MergeTiles(tiles [][]byte) ([]byte, error) {
 		// Merge layers
 		for _, layer := range layers {
 			if existing, ok := layerMap[layer.Name]; ok {
+				// Layers with the same name must agree on Version and Extent:
+				// concatenating features from mismatched tiles yields corrupted
+				// coordinates (different scales) or an invalid encoding.
+				if existing.Version != layer.Version || existing.Extent != layer.Extent {
+					return nil, fmt.Errorf(
+						"cannot merge layer %q: version/extent mismatch (%d/%d vs %d/%d)",
+						layer.Name, existing.Version, existing.Extent, layer.Version, layer.Extent)
+				}
 				// Append features to existing layer
 				existing.Features = append(existing.Features, layer.Features...)
 			} else {

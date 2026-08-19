@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/swayrider/tilesservice/internal/server"
 	log "github.com/swayrider/swlib/logger"
@@ -19,7 +20,7 @@ func newStyleHandler(t *testing.T, stylesDir string) *server.StyleHTTPHandler {
 }
 
 func TestStyleHandler_List(t *testing.T) {
-	t.Run("empty stylesDir always returns light and dark", func(t *testing.T) {
+	t.Run("empty stylesDir returns empty list", func(t *testing.T) {
 		h := newStyleHandler(t, "")
 		req := httptest.NewRequest(http.MethodGet, "/v1/tiles/styles", nil)
 		w := httptest.NewRecorder()
@@ -37,12 +38,12 @@ func TestStyleHandler_List(t *testing.T) {
 			t.Fatalf("failed to decode response: %v", err)
 		}
 
-		names := styleNames(styles)
-		assertContains(t, names, "light")
-		assertContains(t, names, "dark")
+		if len(styles) != 0 {
+			t.Errorf("expected empty style list, got %v", styleNames(styles))
+		}
 	})
 
-	t.Run("configured dir includes defaults and extra styles", func(t *testing.T) {
+	t.Run("configured dir lists only existing styles", func(t *testing.T) {
 		dir := t.TempDir()
 		writeStyleFile(t, dir, "custom-light.json")
 		writeStyleFile(t, dir, "custom-dark.json")
@@ -62,10 +63,10 @@ func TestStyleHandler_List(t *testing.T) {
 		}
 
 		names := styleNames(styles)
-		assertContains(t, names, "light")
-		assertContains(t, names, "dark")
 		assertContains(t, names, "custom-light")
 		assertContains(t, names, "custom-dark")
+		assertNotContains(t, names, "light")
+		assertNotContains(t, names, "dark")
 	})
 
 	t.Run("non-json files in dir are ignored", func(t *testing.T) {
@@ -244,4 +245,50 @@ func assertContains(t *testing.T, names []string, want string) {
 		}
 	}
 	t.Errorf("expected style %q in list %v", want, names)
+}
+
+func assertNotContains(t *testing.T, names []string, unwanted string) {
+	t.Helper()
+	for _, n := range names {
+		if n == unwanted {
+			t.Errorf("unexpected style %q in list %v", unwanted, names)
+			return
+		}
+	}
+}
+
+func TestStyleHandler_TemplateCacheInvalidation(t *testing.T) {
+	dir := t.TempDir()
+	writeStyleFileContent(t, dir, "light.json", `{"name":"v1","version":8,"layers":[]}`)
+
+	h := newStyleHandler(t, dir)
+	get := func() string {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/v1/tiles/styles/light", nil)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d", w.Code)
+		}
+		return w.Body.String()
+	}
+
+	if body := get(); body != `{"name":"v1","version":8,"layers":[]}` {
+		t.Fatalf("first request body = %q, want v1", body)
+	}
+
+	// Rewrite the file with a bumped mtime; the next request must pick it up
+	// (the parsed-template cache is invalidated by the mtime change).
+	path := filepath.Join(dir, "light.json")
+	if err := os.WriteFile(path, []byte(`{"name":"v2","version":8,"layers":[]}`), 0644); err != nil {
+		t.Fatalf("failed to rewrite style: %v", err)
+	}
+	future := time.Now().Add(2 * time.Second)
+	if err := os.Chtimes(path, future, future); err != nil {
+		t.Fatalf("failed to bump mtime: %v", err)
+	}
+
+	if body := get(); body != `{"name":"v2","version":8,"layers":[]}` {
+		t.Errorf("after update, body = %q, want v2", body)
+	}
 }

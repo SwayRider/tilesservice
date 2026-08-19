@@ -3,6 +3,7 @@ package mbtiles
 import (
 	"bytes"
 	"compress/gzip"
+	"strings"
 	"testing"
 
 	"github.com/paulmach/orb"
@@ -12,10 +13,16 @@ import (
 
 // createTestMVTTile creates a test MVT tile with the specified layer name and feature count.
 func createTestMVTTile(layerName string, featureCount int) []byte {
+	return createTestMVTTileWith(layerName, featureCount, 2, 4096)
+}
+
+// createTestMVTTileWith creates a test MVT tile with the specified layer name,
+// feature count, version, and extent.
+func createTestMVTTileWith(layerName string, featureCount int, version, extent uint32) []byte {
 	layer := &mvt.Layer{
 		Name:     layerName,
-		Version:  2,
-		Extent:   4096,
+		Version:  version,
+		Extent:   extent,
 		Features: make([]*geojson.Feature, featureCount),
 	}
 	for i := 0; i < featureCount; i++ {
@@ -153,6 +160,32 @@ func TestMergeTiles_SameLayerName(t *testing.T) {
 	// Features should be concatenated
 	if len(layers[0].Features) != 7 {
 		t.Errorf("roads layer has %d features, want 7 (3+4)", len(layers[0].Features))
+	}
+}
+
+func TestMergeTiles_ExtentMismatch(t *testing.T) {
+	tile1 := createTestMVTTileWith("roads", 3, 2, 4096)
+	tile2 := createTestMVTTileWith("roads", 4, 2, 8192)
+
+	_, err := MergeTiles([][]byte{tile1, tile2})
+	if err == nil {
+		t.Fatal("MergeTiles() expected error for mismatched layer extent")
+	}
+	if !strings.Contains(err.Error(), "version/extent mismatch") {
+		t.Errorf("error = %v, want version/extent mismatch", err)
+	}
+}
+
+func TestMergeTiles_VersionMismatch(t *testing.T) {
+	tile1 := createTestMVTTileWith("roads", 3, 1, 4096)
+	tile2 := createTestMVTTileWith("roads", 4, 2, 4096)
+
+	_, err := MergeTiles([][]byte{tile1, tile2})
+	if err == nil {
+		t.Fatal("MergeTiles() expected error for mismatched layer version")
+	}
+	if !strings.Contains(err.Error(), "version/extent mismatch") {
+		t.Errorf("error = %v, want version/extent mismatch", err)
 	}
 }
 

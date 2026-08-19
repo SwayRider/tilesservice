@@ -1,6 +1,7 @@
 package tilecache
 
 import (
+	"container/list"
 	"testing"
 	"time"
 )
@@ -56,7 +57,8 @@ func TestTwoTierCache_DiskHitPromotion(t *testing.T) {
 	// Clear memory cache manually (simulate eviction)
 	memCache.mu.Lock()
 	memCache.cache = make(map[string][]byte)
-	memCache.lru = []string{}
+	memCache.pos = make(map[string]*list.Element)
+	memCache.lru.Init()
 	memCache.mu.Unlock()
 
 	// Get tile (should hit disk and promote)
@@ -228,7 +230,8 @@ func TestTwoTierCache_PromotionUpdatesAccessPattern(t *testing.T) {
 	// Clear memory
 	memCache.mu.Lock()
 	memCache.cache = make(map[string][]byte)
-	memCache.lru = []string{}
+	memCache.pos = make(map[string]*list.Element)
+	memCache.lru.Init()
 	memCache.mu.Unlock()
 
 	// Access tile0 from disk (should promote)
@@ -237,7 +240,7 @@ func TestTwoTierCache_PromotionUpdatesAccessPattern(t *testing.T) {
 	// Verify tile0 is in memory
 	memCache.mu.RLock()
 	_, inMem := memCache.cache["7/68/0"]
-	lruLen := len(memCache.lru)
+	lruLen := memCache.lru.Len()
 	memCache.mu.RUnlock()
 
 	if !inMem {
@@ -427,7 +430,8 @@ func TestTwoTierCache_LargeDataPromotion(t *testing.T) {
 	// Clear memory
 	memCache.mu.Lock()
 	memCache.cache = make(map[string][]byte)
-	memCache.lru = []string{}
+	memCache.pos = make(map[string]*list.Element)
+	memCache.lru.Init()
 	memCache.mu.Unlock()
 
 	// Read from disk (should promote)

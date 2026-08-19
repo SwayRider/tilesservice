@@ -30,14 +30,14 @@ The tilesservice now includes a two-tier caching system with memory (L1) and dis
 ## Components
 
 ### 1. TileCache Interface
-**File**: `backend/services/tilesservice/internal/server/tile_cache.go`
+**File**: `internal/tilecache/tile_cache.go`
 
 - Defines common interface for cache implementations
 - Methods: `Get()`, `Set()`, `Close()`
 - Allows transparent switching between single-tier and two-tier caching
 
 ### 2. CompressedTileCache (Memory Cache - L1)
-**File**: `backend/services/tilesservice/internal/server/tile_cache.go`
+**File**: `internal/tilecache/tile_cache.go`
 
 - **Storage**: In-memory map
 - **Capacity**: Configurable (default: 1000 tiles)
@@ -49,7 +49,7 @@ The tilesservice now includes a two-tier caching system with memory (L1) and dis
   - Soft limit enforcement (allows temporary overage)
 
 ### 3. DiskTileCache (Disk Cache - L2)
-**File**: `backend/services/tilesservice/internal/server/disk_cache.go`
+**File**: `internal/tilecache/disk_cache.go`
 
 - **Storage**: Hierarchical directory structure (`z{z}/{x}/{y}.mvt`)
 - **Metadata**: SQLite database for LRU tracking
@@ -64,7 +64,7 @@ The tilesservice now includes a two-tier caching system with memory (L1) and dis
   - Graceful shutdown with pending write completion
 
 ### 4. TwoTierCache (Coordinator)
-**File**: `backend/services/tilesservice/internal/server/two_tier_cache.go`
+**File**: `internal/tilecache/two_tier_cache.go`
 
 - **Role**: Coordinates between memory and disk layers
 - **Features**:
@@ -177,28 +177,28 @@ export DISK_CACHE_MAX_FILES=500000          # ~5 GB on disk
 ## File Structure
 
 ### New Files
-1. `backend/services/tilesservice/internal/server/disk_cache.go` - Disk cache implementation
-2. `backend/services/tilesservice/internal/server/two_tier_cache.go` - Cache coordinator
-3. `backend/services/tilesservice/internal/server/disk_cache_test.go` - Disk cache tests
-4. `backend/services/tilesservice/internal/server/two_tier_cache_test.go` - Two-tier cache tests
+1. `internal/tilecache/disk_cache.go` - Disk cache implementation
+2. `internal/tilecache/two_tier_cache.go` - Cache coordinator
+3. `internal/tilecache/disk_cache_test.go` - Disk cache tests
+4. `internal/tilecache/two_tier_cache_test.go` - Two-tier cache tests
 
 ### Modified Files
-1. `backend/services/tilesservice/internal/server/tile_cache.go` - Added interface and background eviction
-2. `backend/services/tilesservice/internal/server/http_tile.go` - Uses TileCache interface
-3. `backend/services/tilesservice/cmd/tilesservice/main.go` - Configuration and initialization
-4. `backend/go.mod` - Added SQLite dependency
+1. `internal/tilecache/tile_cache.go` - Added interface and background eviction
+2. `internal/server/http_tile.go` - Uses TileCache interface
+3. `cmd/tilesservice/main.go` - Configuration and initialization
+4. `go.mod` - Added SQLite dependency
 
 ## Testing
 
 ### Run All Cache Tests
 ```bash
-go test ./services/tilesservice/internal/server/... -v
+go test ./internal/tilecache/... -v
 ```
 
 ### Run Specific Test Suites
 ```bash
-go test ./services/tilesservice/internal/server/... -v -run TestDisk
-go test ./services/tilesservice/internal/server/... -v -run TestTwoTier
+go test ./internal/tilecache/... -v -run TestDisk
+go test ./internal/tilecache/... -v -run TestTwoTier
 ```
 
 ### Test Coverage

@@ -191,16 +191,55 @@ func TestTileHandler_NilIndex(t *testing.T) {
 }
 
 func TestTileHandler_TileNotFound(t *testing.T) {
-	// DB contains only (z=0, x=0, TMS y=0). Requesting x=1 returns ErrTileNotFound.
+	// DB contains only (z=0, x=0, TMS y=0). A z=2 tile is in range (x,y < 4)
+	// but missing, so the handler returns ErrTileNotFound.
 	idx, cleanup := createTileIndex(t, []byte("test-mvt"))
 	defer cleanup()
 
 	h := newTileHandler(t, idx, newMockCache())
-	req := httptest.NewRequest(http.MethodGet, "/v1/tiles/default/0/1/0", nil)
+	req := httptest.NewRequest(http.MethodGet, "/v1/tiles/default/2/0/0", nil)
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, req)
 	if w.Code != http.StatusNoContent {
 		t.Errorf("expected 204 for missing tile, got %d", w.Code)
+	}
+}
+
+func TestTileHandler_OutOfRangeCoords(t *testing.T) {
+	h := newTileHandler(t, nil, newMockCache())
+	tests := []struct {
+		name string
+		path string
+	}{
+		{"x equals 2^z", "/v1/tiles/default/1/2/0"},
+		{"x greater than 2^z", "/v1/tiles/default/16/65536/0"},
+		{"y equals 2^z", "/v1/tiles/default/1/0/2"},
+		{"y greater than 2^z", "/v1/tiles/default/16/0/65536"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, tt.path, nil)
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, req)
+			if w.Code != http.StatusBadRequest {
+				t.Errorf("path %s: expected 400, got %d", tt.path, w.Code)
+			}
+		})
+	}
+}
+
+func TestTileHandler_MaxValidCoordAccepted(t *testing.T) {
+	idx, cleanup := createTileIndex(t, []byte("test-mvt"))
+	defer cleanup()
+
+	h := newTileHandler(t, idx, newMockCache())
+	// z=2 has a 4x4 grid; x=3, y=3 is the maximum valid coordinate. The tile
+	// is not in the fixture, so expect 204 (not 400).
+	req := httptest.NewRequest(http.MethodGet, "/v1/tiles/default/2/3/3", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusNoContent {
+		t.Errorf("expected 204 for max valid coord, got %d", w.Code)
 	}
 }
 
@@ -223,6 +262,9 @@ func TestTileHandler_ServesUncompressed(t *testing.T) {
 	}
 	if enc := w.Header().Get("Content-Encoding"); enc != "" {
 		t.Errorf("Content-Encoding = %q, want empty for uncompressed response", enc)
+	}
+	if v := w.Header().Get("Vary"); v != "Accept-Encoding" {
+		t.Errorf("Vary = %q, want Accept-Encoding on uncompressed responses", v)
 	}
 	if !bytes.Equal(w.Body.Bytes(), tileData) {
 		t.Error("response body does not match tile data")
@@ -259,6 +301,9 @@ func TestTileHandler_ServesPreCompressed(t *testing.T) {
 	}
 	if enc := w.Header().Get("Content-Encoding"); enc != "gzip" {
 		t.Errorf("Content-Encoding = %q, want gzip for pre-compressed tile", enc)
+	}
+	if v := w.Header().Get("Vary"); v != "Accept-Encoding" {
+		t.Errorf("Vary = %q, want Accept-Encoding on pre-compressed responses", v)
 	}
 	if !bytes.Equal(w.Body.Bytes(), compressed) {
 		t.Error("response body does not match pre-compressed tile")
@@ -326,5 +371,8 @@ func TestTileHandler_CacheHit(t *testing.T) {
 	}
 	if !bytes.Equal(w.Body.Bytes(), cachedData) {
 		t.Error("expected cached tile to be served verbatim")
+	}
+	if v := w.Header().Get("Vary"); v != "Accept-Encoding" {
+		t.Errorf("Vary = %q, want Accept-Encoding on cache hits", v)
 	}
 }

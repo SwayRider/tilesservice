@@ -68,6 +68,14 @@ func (r *Reader) GetTile(z, x, y uint32) ([]byte, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
+	// Reject out-of-range coordinates before converting to TMS. The flip
+	// (2^z - 1) - y underflows for y >= 2^z, and x >= 2^z can never exist.
+	// z >= 32 is guarded explicitly because 1<<z wraps to 0 there. A tile
+	// outside the valid range does not exist.
+	if z >= 32 || x >= (1<<z) || y >= (1<<z) {
+		return nil, ErrTileNotFound
+	}
+
 	// Convert from XYZ to TMS y-coordinate
 	// TMS y = (2^z - 1) - XYZ y
 	tmsY := (1 << z) - 1 - y
