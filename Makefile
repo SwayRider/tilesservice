@@ -13,27 +13,35 @@ SHORT_SHA      := $(shell git rev-parse --short HEAD 2>/dev/null)
 SAFE_BRANCH    := $(shell echo "$(CURRENT_BRANCH)" | sed 's|/|-|g; s|[^a-zA-Z0-9-]|-|g')
 
 FORCE_DEV_LATEST ?=
+NO_PUSH          ?=
 
 ifneq ($(VERSION_TAG),)
   BASE_TAG     := $(VERSION_TAG)
   FLOATING_TAG := latest
-  ifeq ($(FORCE_DEV_LATEST),1)
+else ifeq ($(CURRENT_BRANCH),main)
+  BASE_TAG     := $(LAST_VERSION)-$(DATE_TAG)-dev
+  FLOATING_TAG := dev-latest
+else ifneq ($(CURRENT_BRANCH),)
+  BASE_TAG     := $(LAST_VERSION)-$(SAFE_BRANCH)
+  FLOATING_TAG :=
+else
+  BASE_TAG     := $(LAST_VERSION)-$(SHORT_SHA)
+  FLOATING_TAG :=
+endif
+
+# FORCE_DEV_LATEST=1 adds the dev-latest floating tag on top of whatever
+# BASE_TAG/FLOATING_TAG was just decided -- e.g. a release build or a
+# feature-branch build that should also advance dev-mini's dev-latest
+# pointer. No-op when dev-latest is already the FLOATING_TAG (main,
+# untagged HEAD) to avoid tagging the image twice.
+ifeq ($(FORCE_DEV_LATEST),1)
+  ifneq ($(FLOATING_TAG),dev-latest)
     EXTRA_TAG := dev-latest
   else
     EXTRA_TAG :=
   endif
-else ifeq ($(CURRENT_BRANCH),main)
-  BASE_TAG     := $(LAST_VERSION)-$(DATE_TAG)-dev
-  FLOATING_TAG := dev-latest
-  EXTRA_TAG    :=
-else ifneq ($(CURRENT_BRANCH),)
-  BASE_TAG     := $(LAST_VERSION)-$(SAFE_BRANCH)
-  FLOATING_TAG :=
-  EXTRA_TAG    :=
 else
-  BASE_TAG     := $(LAST_VERSION)-$(SHORT_SHA)
-  FLOATING_TAG :=
-  EXTRA_TAG    :=
+  EXTRA_TAG :=
 endif
 
 # Non-release builds get an incrementing build number (-b<N>) derived from the
@@ -64,16 +72,32 @@ ifneq ($(EXTRA_TAG),)
   TAGS := $(TAGS) -t $(IMAGE):$(EXTRA_TAG)
 endif
 
-.PHONY: container-build
+# NO_PUSH=1 builds a single-arch image loaded into the local Docker daemon
+# instead of a multi-arch image pushed to the registry -- buildx can't --load
+# a multi-platform build, so this trades arch coverage for a local image you
+# can `docker run` to sanity-check before a real push.
+HOST_PLATFORM := linux/$(shell uname -m | sed 's/x86_64/amd64/; s/aarch64/arm64/')
+ifneq ($(NO_PUSH),)
+  PLATFORM  := $(HOST_PLATFORM)
+  PUSH_FLAG := --load
+else
+  PLATFORM  := linux/amd64,linux/arm64
+  PUSH_FLAG := --push
+endif
+
+.PHONY: container-build print-tags
 
 all: container-build
 
 container-build:
-	@echo "Building $(IMAGE):$(BASE_TAG)$(if $(FLOATING_TAG), [+$(FLOATING_TAG)])$(if $(EXTRA_TAG), [+$(EXTRA_TAG)])"
+	@echo "Building $(IMAGE):$(BASE_TAG)$(if $(FLOATING_TAG), [+$(FLOATING_TAG)])$(if $(EXTRA_TAG), [+$(EXTRA_TAG)])$(if $(NO_PUSH), [no-push -- $(HOST_PLATFORM) only])"
 	docker buildx build \
 		-f Dockerfile \
 		--network=host \
-		--platform linux/amd64,linux/arm64 \
+		--platform $(PLATFORM) \
 		$(TAGS) \
-		--push .
+		$(PUSH_FLAG) .
 	@echo "Done."
+
+print-tags:
+	@echo $(BASE_TAG) $(FLOATING_TAG) $(EXTRA_TAG)
