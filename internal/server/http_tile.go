@@ -142,6 +142,22 @@ func (h *TileHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Check if tile is already compressed
 	if compression.IsGzipped(tileData) {
+		if !acceptsGzip(r) {
+			// The client did not offer gzip: send the decoded tile.
+			plain, err := gunzip(tileData)
+			if err != nil {
+				h.l.Errorf("failed to decode stored tile z=%d x=%d y=%d: %v", z, x, y, err)
+				http.Error(w, "Failed to decode tile", http.StatusInternalServerError)
+				return
+			}
+			h.l.Debugf("serving decoded tile z=%d x=%d y=%d (client doesn't accept gzip)", z, x, y)
+			w.Header().Set("Content-Length", fmt.Sprintf("%d", len(plain)))
+			w.WriteHeader(http.StatusOK)
+			if _, err := w.Write(plain); err != nil {
+				h.l.Debugf("failed to write decoded tile: %v", err)
+			}
+			return
+		}
 		// Debug log for pre-compressed tile
 		h.l.Debugf("serving pre-compressed tile z=%d x=%d y=%d", z, x, y)
 		w.Header().Set("Content-Encoding", "gzip")
@@ -154,7 +170,7 @@ func (h *TileHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check if client supports gzip
-	if !compression.SupportsGzip(r) {
+	if !acceptsGzip(r) {
 		// Debug log for uncompressed serve
 		h.l.Debugf("serving uncompressed tile z=%d x=%d y=%d (client doesn't support gzip)", z, x, y)
 		// Serve uncompressed (backward compatible)

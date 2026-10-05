@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -293,6 +294,7 @@ func TestTileHandler_ServesPreCompressed(t *testing.T) {
 
 	h := newTileHandler(t, idx, newMockCache())
 	req := httptest.NewRequest(http.MethodGet, "/v1/tiles/default/0/0/0", nil)
+	req.Header.Set("Accept-Encoding", "gzip")
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, req)
 
@@ -374,5 +376,71 @@ func TestTileHandler_CacheHit(t *testing.T) {
 	}
 	if v := w.Header().Get("Vary"); v != "Accept-Encoding" {
 		t.Errorf("Vary = %q, want Accept-Encoding on cache hits", v)
+	}
+}
+
+func TestTileHandler_PreCompressedNegotiation(t *testing.T) {
+	plain := []byte("raw-mvt-tile-bytes")
+	compressed := gzipBytes(t, plain)
+
+	tests := []struct {
+		name       string
+		accept     string
+		wantGzip   bool
+	}{
+		{"no header", "", false},
+		{"identity", "identity", false},
+		{"gzip q=0", "gzip;q=0", false},
+		{"gzip q=0.0 with br", "br, gzip; q=0.0", false},
+		{"gzip", "gzip", true},
+		{"br and gzip q=0.8", "br, gzip;q=0.8", true},
+		{"wildcard", "*", true},
+		{"wildcard but gzip refused", "*, gzip;q=0", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			idx, cleanup := createTileIndex(t, compressed)
+			defer cleanup()
+			h := newTileHandler(t, idx, newMockCache())
+			req := httptest.NewRequest(http.MethodGet, "/v1/tiles/default/0/0/0", nil)
+			if tt.accept != "" {
+				req.Header.Set("Accept-Encoding", tt.accept)
+			}
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, req)
+
+			if w.Code != http.StatusOK {
+				t.Fatalf("expected 200, got %d", w.Code)
+			}
+			want, wantEnc := plain, ""
+			if tt.wantGzip {
+				want, wantEnc = compressed, "gzip"
+			}
+			if enc := w.Header().Get("Content-Encoding"); enc != wantEnc {
+				t.Errorf("Content-Encoding = %q, want %q", enc, wantEnc)
+			}
+			if !bytes.Equal(w.Body.Bytes(), want) {
+				t.Error("body does not match the expected representation")
+			}
+			if v := w.Header().Get("Vary"); v != "Accept-Encoding" {
+				t.Errorf("Vary = %q, want Accept-Encoding", v)
+			}
+			if cl := w.Header().Get("Content-Length"); cl != strconv.Itoa(len(want)) {
+				t.Errorf("Content-Length = %q, want %d", cl, len(want))
+			}
+		})
+	}
+}
+
+func TestTileHandler_CorruptGzipTile(t *testing.T) {
+	corrupt := []byte{0x1f, 0x8b, 0x08, 0x00, 0xde, 0xad}
+	idx, cleanup := createTileIndex(t, corrupt)
+	defer cleanup()
+	h := newTileHandler(t, idx, newMockCache())
+	req := httptest.NewRequest(http.MethodGet, "/v1/tiles/default/0/0/0", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500 for a corrupt stored tile without gzip support, got %d", w.Code)
 	}
 }
