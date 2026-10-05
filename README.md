@@ -14,6 +14,20 @@ The tilesservice exposes an HTTP API for tile serving:
 
 > **Migration in progress:** MBTiles storage (below) is being replaced by a single Protomaps planet PMTiles release read from the object store (or `TILES_ROOT/current` with the local-file backend; with styles, fonts and sprites), with `base` (MBTiles) and `planet` (PMTiles) tilesets served side-by-side during transition. The planet release is read from an S3-compatible object store (Garage) with ranged GETs; a local-file backend stays for tests and laptops. See [`Docs/MIGRATION-DATA-MANAGER.md`](../Docs/MIGRATION-DATA-MANAGER.md) and `data-manager/TILESSERVICE-PMTILES.md`. This README is rewritten with the code change.
 
+### Planet tileset (PMTiles)
+
+`GET /v1/tiles/planet/{z}/{x}/{y}` is served from a single [PMTiles v3](https://github.com/protomaps/PMTiles) archive (Protomaps basemap, gzip MVT, z0–15) configured with `PMTILES_URL`: a local file (`file:///path/tiles.pmtiles`) or an object in an S3-compatible store (`s3://bucket/key`, read with ranged GETs; `S3_ENDPOINT`, `S3_REGION`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, use the read-only key). Every other tileset name still uses the legacy MBTiles index (`TILES_PATH`).
+
+- **Zoom range** comes from the archive header: tiles outside it, and missing tiles, answer `204`; invalid coordinates `400`; `503` when the planet archive is not configured or could not be opened (see the startup log).
+- **Compression:** stored gzip tiles are sent as they are to clients that accept gzip, and decoded for those that do not; an archive with uncompressed tiles is gzipped on demand. Brotli/zstd archives and non-MVT archives are refused at startup.
+- **Caching:** weak `ETag` (archive id + coordinates, `If-None-Match` answers `304`), `Cache-Control: public, max-age=86400`.
+- **Reader:** `internal/pmtiles` reads through an `io.ReaderAt` (file, or `internal/objstore` for S3: ranged GETs signed with SigV4, no SDK dependency); leaf directories are cached in memory.
+- Archives are validated at open (header, section bounds against the file size, so a truncated upload is refused). The archive is opened once at startup; reload on release switch, `tiles.json`, styles, glyphs and sprites follow in later PRs (see `data-manager/TILESSERVICE-PMTILES.md`).
+
+**Check an archive or the object store credentials without the gateway:** `go run ./cmd/pmtiles-probe -url s3://swayrider-tiles/releases/r-test-1/tiles.pmtiles [-tile 12/2097/1373 -out tile.gz]` opens it with the same code and `S3_*` environment variables as the service and prints header, bounds, layers and (optionally) one tile.
+
+A small test archive: `pmtiles extract https://build.protomaps.com/<build>.pmtiles brussels.pmtiles --bbox=4.2,50.75,4.55,50.95`.
+
 The service reads tiles from MBTiles files organized in a hierarchical structure based on zoom levels and geographic regions.
 
 ### Caching

@@ -9,7 +9,9 @@
 // JWT carrying the "tiles:serve" scope; user JWTs are rejected (client
 // requests go through swayrider-api, which injects its own service token):
 //   - GET /v1/tiles/ping - Health check endpoint (public)
-//   - GET /v1/tiles/{tileset}/{z}/{x}/{y} - Retrieve a vector tile (requires tiles:serve scope)
+//   - GET /v1/tiles/{tileset}/{z}/{x}/{y} - Retrieve a vector tile (requires tiles:serve scope);
+//     tileset "planet" is read from a PMTiles archive (PMTILES_URL), every other name from the
+//     legacy MBTiles index (TILES_PATH)
 //   - GET /v1/tiles/styles - List map styles (requires tiles:serve scope)
 //   - GET /v1/tiles/styles/{name} - Retrieve a map style (requires tiles:serve scope)
 package main
@@ -30,9 +32,11 @@ import (
 	"github.com/swayrider/swlib/jwt"
 	"github.com/swayrider/swlib/jwtkeys"
 	log "github.com/swayrider/swlib/logger"
+	"github.com/swayrider/tilesservice/internal/pmtiles"
 	"github.com/swayrider/tilesservice/internal/server"
 	"github.com/swayrider/tilesservice/internal/tilecache"
 	"github.com/swayrider/tilesservice/internal/tileindex"
+	"github.com/swayrider/tilesservice/internal/tilesource"
 )
 
 /*
@@ -41,6 +45,11 @@ Flags:
 	-http-port				(default: 8080)
 	-log-level				(default: info)
 	-tiles-path				(default: "")
+	-pmtiles-url			(default: "")
+	-s3-endpoint			(default: "")
+	-s3-region				(default: "garage")
+	-s3-access-key-id		(default: "")
+	-s3-secret-access-key		(default: "")
 	-styles-path				(default: "")
 	-compression-enabled		(default: true)
 	-compression-cache-size		(default: 1000)
@@ -58,6 +67,11 @@ Environment variables:
 	HTTP_PORT
 	LOG_LEVEL
 	TILES_PATH
+	PMTILES_URL
+	S3_ENDPOINT
+	S3_REGION
+	S3_ACCESS_KEY_ID
+	S3_SECRET_ACCESS_KEY
 	STYLES_PATH
 	COMPRESSION_ENABLED
 	COMPRESSION_CACHE_SIZE
@@ -76,6 +90,23 @@ const (
 	FldTilesPath = "tiles-path" // CLI flag name for tiles storage path
 	EnvTilesPath = "TILES_PATH" // Environment variable name for tiles storage path
 	DefTilesPath = ""           // Default tiles path (empty)
+
+	FldPMTilesURL = "pmtiles-url" // CLI flag name for the planet PMTiles archive location
+	EnvPMTilesURL = "PMTILES_URL" // Environment variable name for the planet PMTiles archive location
+	DefPMTilesURL = ""            // Default (empty: tileset "planet" disabled)
+
+	FldS3Endpoint        = "s3-endpoint"          // CLI flag name for the S3 endpoint
+	EnvS3Endpoint        = "S3_ENDPOINT"          // Environment variable name for the S3 endpoint
+	DefS3Endpoint        = ""                     // Default S3 endpoint (empty)
+	FldS3Region          = "s3-region"            // CLI flag name for the S3 signing region
+	EnvS3Region          = "S3_REGION"            // Environment variable name for the S3 signing region
+	DefS3Region          = "garage"               // Default S3 region (Garage's)
+	FldS3AccessKeyID     = "s3-access-key-id"     // CLI flag name for the S3 access key id
+	EnvS3AccessKeyID     = "S3_ACCESS_KEY_ID"     // Environment variable name for the S3 access key id
+	DefS3AccessKeyID     = ""                     // Default access key id (empty)
+	FldS3SecretAccessKey = "s3-secret-access-key" // CLI flag name for the S3 secret key (prefer the environment variable)
+	EnvS3SecretAccessKey = "S3_SECRET_ACCESS_KEY" // Environment variable name for the S3 secret key
+	DefS3SecretAccessKey = ""                     // Default secret key (empty)
 
 	FldStylesPath = "styles-path" // CLI flag name for styles directory path
 	EnvStylesPath = "STYLES_PATH" // Environment variable name for styles directory path
@@ -204,6 +235,16 @@ func newApp() app.App {
 			app.NewStringConfigField(
 				FldTilesPath, EnvTilesPath, "Path to the tiles storage directory", DefTilesPath),
 			app.NewStringConfigField(
+				FldPMTilesURL, EnvPMTilesURL, "Location of the planet PMTiles archive: file:///path/tiles.pmtiles or s3://bucket/key (empty disables the planet tileset)", DefPMTilesURL),
+			app.NewStringConfigField(
+				FldS3Endpoint, EnvS3Endpoint, "S3-compatible endpoint for s3:// locations (e.g. http://garage:3900)", DefS3Endpoint),
+			app.NewStringConfigField(
+				FldS3Region, EnvS3Region, "S3 signing region", DefS3Region),
+			app.NewStringConfigField(
+				FldS3AccessKeyID, EnvS3AccessKeyID, "S3 access key id (use the read-only key)", DefS3AccessKeyID),
+			app.NewStringConfigField(
+				FldS3SecretAccessKey, EnvS3SecretAccessKey, "S3 secret access key (set via the environment, flags are visible in the process list)", DefS3SecretAccessKey),
+			app.NewStringConfigField(
 				FldStylesPath, EnvStylesPath, "Path to the map styles directory", DefStylesPath),
 			app.NewBoolConfigField(
 				FldCompressionEnabled, EnvCompressionEnabled, "Enable HTTP gzip compression", DefCompressionEnabled),
@@ -224,7 +265,7 @@ func newApp() app.App {
 		).
 		WithConfigFields(app.JWTKeysConfigFields()...).
 		WithAppData("JWTKeyCache", jwtKeyCache).
-		WithInitializers(initializeTileIndex, app.JWTKeysInitializer(jwtKeyCache)).
+		WithInitializers(initializeTileIndex, initializePMTiles, app.JWTKeysInitializer(jwtKeyCache)).
 		WithBackgroundRoutines(app.JWTKeysFetcher(jwtKeyCache)).
 		WithHTTP(startHTTPServer, stopHTTPServer)
 }
@@ -238,8 +279,8 @@ func startHTTPServer(a app.App) error {
 	lg := a.Logger().Derive(log.WithFunction("startHTTPServer"))
 	httpPort := app.GetConfigField[int](a.Config(), app.KeyHttpPort)
 
-	// Get tile index
-	idx := app.GetAppData[*tileindex.TileIndex](a, "TileIndex")
+	// Get tile index (unset when TILES_PATH is not configured, e.g. a planet-only setup)
+	idx, _ := a.AppData("TileIndex").(*tileindex.TileIndex)
 
 	// Initialize compressed tile cache
 	compressionEnabled := app.GetConfigField[bool](a.Config(), FldCompressionEnabled)
@@ -359,6 +400,9 @@ func startHTTPServer(a app.App) error {
 
 	// Tile endpoint — requires a service JWT with the tiles:serve scope.
 	tileHandler := server.NewTileHTTPHandler(idx, tileCache, a.Logger())
+	if archive, ok := a.AppData("PMTiles").(*pmtiles.Reader); ok && archive != nil {
+		tileHandler.WithArchive(archive)
+	}
 	mux.Handle("GET /v1/tiles/{tileset}/{z}/{x}/{y}", requireTilesAuth(keyCache, tileHandler))
 
 	// CORS middleware - allow all origins for development
@@ -404,14 +448,14 @@ func stopHTTPServer(a app.App) {
 	}
 
 	// Close memory cache
-	if memCache := app.GetAppData[*tilecache.CompressedTileCache](a, "MemoryCache"); memCache != nil {
+	if memCache, _ := a.AppData("MemoryCache").(*tilecache.CompressedTileCache); memCache != nil {
 		if err := memCache.Close(); err != nil {
 			lg.Errorf("failed to close memory cache: %v", err)
 		}
 	}
 
 	// Close disk cache
-	if diskCache := app.GetAppData[*tilecache.DiskTileCache](a, "DiskCache"); diskCache != nil {
+	if diskCache, _ := a.AppData("DiskCache").(*tilecache.DiskTileCache); diskCache != nil {
 		if err := diskCache.Close(); err != nil {
 			lg.Errorf("failed to close disk cache: %v", err)
 		} else {
@@ -419,9 +463,15 @@ func stopHTTPServer(a app.App) {
 		}
 	}
 
+	// Close the planet archive
+	if archive, _ := a.AppData("PMTiles").(*pmtiles.Reader); archive != nil {
+		if err := archive.Close(); err != nil {
+			lg.Errorf("failed to close planet archive: %v", err)
+		}
+	}
+
 	// Close tile index
-	idx := app.GetAppData[*tileindex.TileIndex](a, "TileIndex")
-	if idx != nil {
+	if idx, _ := a.AppData("TileIndex").(*tileindex.TileIndex); idx != nil {
 		if err := idx.Close(); err != nil {
 			lg.Errorf("failed to close tile index: %v", err)
 		}
@@ -453,5 +503,37 @@ func initializeTileIndex(a app.App) error {
 	idx := tileindex.New(tilesPath)
 	a.SetAppData("TileIndex", idx)
 
+	return nil
+}
+
+// initializePMTiles opens the planet PMTiles archive (PMTILES_URL: a local file or an object in
+// an S3-compatible store) and stores the reader in the application. A missing configuration
+// disables the planet tileset; a failing open is logged loudly and leaves it disabled
+// (requests for it answer 503) so the legacy tilesets keep working.
+func initializePMTiles(a app.App) error {
+	lg := a.Logger().Derive(log.WithFunction("initializePMTiles"))
+
+	location := app.GetConfigField[string](a.Config(), FldPMTilesURL)
+	if location == "" {
+		lg.Infoln("PMTILES_URL not configured, tileset \"planet\" is disabled")
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	reader, err := tilesource.Open(ctx, location, tilesource.S3{
+		Endpoint:  app.GetConfigField[string](a.Config(), FldS3Endpoint),
+		Region:    app.GetConfigField[string](a.Config(), FldS3Region),
+		AccessKey: app.GetConfigField[string](a.Config(), FldS3AccessKeyID),
+		SecretKey: app.GetConfigField[string](a.Config(), FldS3SecretAccessKey),
+	})
+	if err != nil {
+		lg.Errorf("cannot open the planet archive %s, tileset \"planet\" stays disabled: %v", location, err)
+		return nil
+	}
+	h := reader.Header()
+	lg.Infof("planet archive %s: zoom %d-%d, %d tiles addressed, tile compression %s, id %s",
+		location, h.MinZoom, h.MaxZoom, h.AddressedTiles, h.TileCompression, reader.ID())
+	a.SetAppData("PMTiles", reader)
 	return nil
 }
