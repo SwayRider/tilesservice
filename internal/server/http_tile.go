@@ -27,9 +27,10 @@ const ContentTypeMVT = "application/vnd.mapbox-vector-tile"
 // raw binary tile data with appropriate content-type and CORS headers.
 // Supports automatic gzip compression with caching for improved performance.
 type TileHTTPHandler struct {
-	idx   *tileindex.TileIndex
-	cache tilecache.TileCache
-	l     *log.Logger
+	idx    *tileindex.TileIndex
+	cache  tilecache.TileCache
+	planet TileArchive // PMTiles archive of the planet tileset; nil = disabled
+	l      *log.Logger
 }
 
 // NewTileHTTPHandler creates a new HTTP handler for serving raw tiles.
@@ -72,7 +73,6 @@ func (h *TileHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// tileset := parts[0] // Currently unused, reserved for future multi-tileset support
 	z, err := strconv.ParseUint(parts[1], 10, 32)
 	if err != nil {
 		http.Error(w, "Invalid zoom level", http.StatusBadRequest)
@@ -88,6 +88,13 @@ func (h *TileHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	y, err := strconv.ParseUint(parts[3], 10, 32)
 	if err != nil {
 		http.Error(w, "Invalid y coordinate", http.StatusBadRequest)
+		return
+	}
+
+	// The planet tileset is read from a PMTiles archive; every other name keeps using the
+	// legacy MBTiles index (the {tileset} segment was ignored before).
+	if parts[0] == PlanetTileset {
+		h.servePlanet(w, r, z, x, y)
 		return
 	}
 
