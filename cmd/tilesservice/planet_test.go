@@ -14,7 +14,6 @@ import (
 	"testing"
 
 	jwt5 "github.com/golang-jwt/jwt/v5"
-	"github.com/swayrider/swlib/app"
 	"github.com/swayrider/swlib/jwt"
 	"github.com/swayrider/swlib/jwtkeys"
 	"github.com/swayrider/tilesservice/internal/pmtiles/pmtilestest"
@@ -183,5 +182,4 @@ func TestInitializePMTilesWithoutConfig(t *testing.T) {
 	if application.AppData("PMTiles") != nil {
 		t.Error("no archive may be registered without PMTILES_URL")
 	}
-	var _ app.App = application
 }

@@ -120,33 +120,3 @@ func (d directory) find(id uint64) (entry, bool) {
 	}
 	return entry{}, false
 }
-
-// encodeDirectory is the inverse of parseDirectory; entries must be sorted by TileID. Used by
-// the test fixture writer.
-func encodeDirectory(d directory) []byte {
-	var buf bytes.Buffer
-	put := func(v uint64) {
-		var tmp [binary.MaxVarintLen64]byte
-		buf.Write(tmp[:binary.PutUvarint(tmp[:], v)])
-	}
-	put(uint64(len(d)))
-	var last uint64
-	for _, e := range d {
-		put(e.TileID - last)
-		last = e.TileID
-	}
-	for _, e := range d {
-		put(uint64(e.RunLength))
-	}
-	for _, e := range d {
-		put(uint64(e.Length))
-	}
-	for i, e := range d {
-		if i > 0 && e.Offset == d[i-1].Offset+uint64(d[i-1].Length) {
-			put(0)
-		} else {
-			put(e.Offset + 1)
-		}
-	}
-	return buf.Bytes()
-}
