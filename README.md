@@ -24,6 +24,8 @@ The tilesservice exposes an HTTP API for tile serving:
 - **Reader:** `internal/pmtiles` reads through an `io.ReaderAt` (file, or `internal/objstore` for S3: ranged GETs signed with SigV4, no SDK dependency); leaf directories are cached in memory.
 - Archives are validated at open (header, section bounds against the file size, so a truncated upload is refused). The archive is opened once at startup; reload on release switch, `tiles.json`, styles, glyphs and sprites follow in later PRs (see `data-manager/TILESSERVICE-PMTILES.md`).
 
+**Check an archive or the object store credentials without the gateway:** `go run ./cmd/pmtiles-probe -url s3://swayrider-tiles/releases/r-test-1/tiles.pmtiles [-tile 12/2097/1373 -out tile.gz]` opens it with the same code and `S3_*` environment variables as the service and prints header, bounds, layers and (optionally) one tile.
+
 A small test archive: `pmtiles extract https://build.protomaps.com/<build>.pmtiles brussels.pmtiles --bbox=4.2,50.75,4.55,50.95`.
 
 The service reads tiles from MBTiles files organized in a hierarchical structure based on zoom levels and geographic regions.
