@@ -12,7 +12,7 @@ The tilesservice exposes an HTTP API for tile serving:
 
 ### Tile Storage
 
-> **Migration in progress:** MBTiles storage (below) is being replaced by a single Protomaps planet PMTiles release read from `TILES_ROOT/current` (with styles, fonts and sprites), with `base` (MBTiles) and `planet` (PMTiles) tilesets served side-by-side during transition. See [`Docs/MIGRATION-DATA-MANAGER.md`](../Docs/MIGRATION-DATA-MANAGER.md) and `data-manager/TILESSERVICE-PMTILES.md`. This README is rewritten with the code change.
+> **Migration in progress:** MBTiles storage (below) is being replaced by a single Protomaps planet PMTiles release read from the object store (or `TILES_ROOT/current` with the local-file backend; with styles, fonts and sprites), with `base` (MBTiles) and `planet` (PMTiles) tilesets served side-by-side during transition. The planet release is read from an S3-compatible object store (Garage) with ranged GETs; a local-file backend stays for tests and laptops. See [`Docs/MIGRATION-DATA-MANAGER.md`](../Docs/MIGRATION-DATA-MANAGER.md) and `data-manager/TILESSERVICE-PMTILES.md`. This README is rewritten with the code change.
 
 The service reads tiles from MBTiles files organized in a hierarchical structure based on zoom levels and geographic regions.
 
