@@ -64,6 +64,9 @@ func startPlanetApp(t *testing.T, env map[string]string) (port int, bearer strin
 	if err := initializePMTiles(application); err != nil {
 		t.Fatal(err)
 	}
+	if err := initializeRelease(application); err != nil {
+		t.Fatal(err)
+	}
 	if err := startHTTPServer(application); err != nil {
 		t.Fatalf("startHTTPServer: %v", err)
 	}
