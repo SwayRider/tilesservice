@@ -62,6 +62,7 @@ tilesservice only accepts **service client tokens** with the `tiles:serve` scope
 | `GET /v1/tiles/ready` | Public — no token required |
 | `GET /v1/tiles/styles` | Service client token with `tiles:serve` scope |
 | `GET /v1/tiles/styles/{name}` | Service client token with `tiles:serve` scope |
+| `GET /v1/tiles/styles/{id}/{variant}`, `GET /v1/tiles/styles/{id}/{version}/{variant}` | Service client token with `tiles:serve` scope |
 | `GET /v1/tiles/{tileset}/{z}/{x}/{y}` | Service client token with `tiles:serve` scope |
 
 AUTHSERVICE_HOST and AUTHSERVICE_PORT must be configured so the service can fetch JWT public keys for token validation. Keys are fetched once at startup and then refreshed in the background (default every 300s — see JWT Key Refresh below); a failed refresh never clears the last known-good keys, and each fetch is bounded by a timeout.
@@ -165,31 +166,34 @@ Readiness: whether the planet tileset can be served. Like ping it needs no token
 
 ---
 
-### Get Style
+### Styles
 
-Retrieves style definition for a named style.
+Styles are MapLibre style JSON files that are Go templates, rendered per request with the public URLs. Two sources:
 
-- **Endpoint:** `GET /v1/tiles/styles/{name}`
-- **Access:** Service client token with `tiles:serve` scope
+- **The active release** (`TILES_ROOT`): named styles listed in `manifest.json`, each with a version and a `light` and a `dark` variant. Template variables: `{{.TilesBaseURL}}` (= `SERVICE_HOST[:SERVICE_PORT]SERVICE_PREFIX`, the gateway's public URL with `/v1/tiles`) and `{{.Tileset}}` (the release's tileset name, `planet`). A typical source is `"tiles": ["{{.TilesBaseURL}}/{{.Tileset}}/{z}/{x}/{y}"]` with `"maxzoom": 15`. MapLibre's single-brace `{z}/{x}/{y}` does not collide with the template syntax.
+- **Legacy files** in `STYLES_PATH` (`<name>.json`, pointing at the `base` tileset; `{{.Tileset}}` renders `base`).
 
-**Parameters:**
+A release is rejected at load time (the previous one keeps serving, see `/ready`) when a style variant is missing, does not parse as a template, fails to render or does not produce valid JSON.
 
-| Parameter | Type | Description |
-| --------- | ---- | ----------- |
-| `name` | string | Style name (e.g., "light", "dark") |
+| Endpoint | Serves |
+| -------- | ------ |
+| `GET /v1/tiles/styles` | the listing |
+| `GET /v1/tiles/styles/{name}` | a legacy file `{name}.json` if there is one; else, from the release, the alias `light`/`dark` (that variant of the default style) or a style id (its `light` variant, else `dark`) |
+| `GET /v1/tiles/styles/{id}/{variant}` | the newest version of the style `id`; `variant` is `light` or `dark` |
+| `GET /v1/tiles/styles/{id}/{version}/{variant}` | a fixed version; any version listed in the manifest stays reachable |
 
-**Response:**
+**A legacy file wins over a release alias of the same name**, so clients of the legacy tileset keep getting their style (`light`/`dark` → `base`) while a release is loaded. New clients use `styles/{id}/{variant}`. The unversioned `light`/`dark` aliases start pointing at the release once `STYLES_PATH` has no file of that name (when the legacy tileset is removed).
 
-Returns the map style JSON definition.
+Status codes: `400` for an invalid id/version in the path (anything outside `[A-Za-z0-9_-]` for ids, `[0-9A-Za-z._-]` for versions, or `.`/`..`); `404` for an unknown style, version or variant; `503` for `styles/{id}/…` while no release is loaded.
 
----
+**Caching:** release styles carry a strong `ETag` (`If-None-Match` answers `304`). Versioned URLs are `Cache-Control: public, max-age=31536000, immutable` (the data-manager bumps the version when the content changes); unversioned URLs and aliases `max-age=300`. Rendered styles are cached per release, so a release switch never serves the old release's style. Legacy files are served as before.
 
-### List Styles
+**Listing:** a JSON array. Every entry has a `name` that `GET /styles/{name}` serves, so clients that only read `name` keep working. Legacy files come first; with a release loaded the aliases `light`/`dark` (unless a legacy file has that name) and one entry per style id follow, at its newest version, the default first:
 
-Lists available style names.
-
-- **Endpoint:** `GET /v1/tiles/styles`
-- **Access:** Service client token with `tiles:serve` scope
+```json
+[{"name":"light"},{"name":"dark"},
+ {"name":"classic","id":"classic","label":"Classic","version":"3","default":true,"variants":["light","dark"]}]
+```
 
 ---
 

@@ -57,6 +57,10 @@ type Holder struct {
 	store Store
 	l     *log.Logger
 
+	// validate, when set, checks a release after its archive opened and before it becomes the
+	// active one; an error rejects the release like any other load failure.
+	validate func(context.Context, *Release) error
+
 	reloadMu sync.Mutex // one reload at a time
 
 	mu        sync.Mutex
@@ -77,6 +81,14 @@ func NewHolder(store Store, l *log.Logger) *Holder {
 		l:       l.Derive(log.WithComponent("ReleaseHolder")),
 		trigger: make(chan struct{}, 1),
 	}
+}
+
+// SetValidator installs a check that every release must pass before it is switched to (for
+// example: all styles parse and render). Call it before the first Reload.
+func (h *Holder) SetValidator(fn func(context.Context, *Release) error) {
+	h.reloadMu.Lock()
+	defer h.reloadMu.Unlock()
+	h.validate = fn
 }
 
 // Acquire returns the active release and a func that must be called when the caller is done with
@@ -153,7 +165,14 @@ func (h *Holder) reload(ctx context.Context) (bool, error) {
 		return false, fmt.Errorf("release %s: opening %s: %w", key, m.Tileset.File, err)
 	}
 
-	next := &slot{rel: &Release{Key: key, Manifest: m, Archive: archive, loc: loc, loadedAt: time.Now()}}
+	rel := &Release{Key: key, Manifest: m, Archive: archive, loc: loc, loadedAt: time.Now()}
+	if h.validate != nil {
+		if err := h.validate(ctx, rel); err != nil {
+			h.closeRelease(rel)
+			return false, fmt.Errorf("release %s: %w", key, err)
+		}
+	}
+	next := &slot{rel: rel}
 
 	h.mu.Lock()
 	if h.closed {

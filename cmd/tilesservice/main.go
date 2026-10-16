@@ -14,7 +14,10 @@
 //     tileset "planet" is read from a PMTiles archive (a release found through TILES_ROOT, or a
 //     single archive from PMTILES_URL), every other name from the legacy MBTiles index (TILES_PATH)
 //   - GET /v1/tiles/styles - List map styles (requires tiles:serve scope)
-//   - GET /v1/tiles/styles/{name} - Retrieve a map style (requires tiles:serve scope)
+//   - GET /v1/tiles/styles/{name} - Retrieve a map style: a legacy style file, else an alias
+//     ("light", "dark") or style id of the active release (requires tiles:serve scope)
+//   - GET /v1/tiles/styles/{id}/{variant} - Newest version of a release style, variant light or dark
+//   - GET /v1/tiles/styles/{id}/{version}/{variant} - A fixed version of a release style
 package main
 
 import (
@@ -378,14 +381,7 @@ func startHTTPServer(a app.App) error {
 	}
 
 	// Construct tiles base URL for style templates
-	serviceHost := app.GetConfigField[string](a.Config(), FldServiceHost)
-	servicePort := app.GetConfigField[string](a.Config(), FldServicePort)
-	servicePrefix := app.GetConfigField[string](a.Config(), FldServicePrefix)
-	tilesBaseURL := serviceHost
-	if servicePort != "" {
-		tilesBaseURL += ":" + servicePort
-	}
-	tilesBaseURL += servicePrefix
+	tilesBaseURL := publicTilesURL(a)
 	if tilesBaseURL != "" {
 		lg.Infof("tiles base URL for styles: %s", tilesBaseURL)
 	} else {
@@ -414,8 +410,13 @@ func startHTTPServer(a app.App) error {
 	// Registered before the tile wildcard route to ensure the static
 	// /v1/tiles/styles prefix takes priority.
 	styleHandler := server.NewStyleHTTPHandler(stylesPath, tilesBaseURL, a.Logger())
+	if holder, ok := a.AppData("Release").(*release.Holder); ok && holder != nil {
+		styleHandler.WithReleases(holder)
+	}
 	mux.Handle("GET /v1/tiles/styles", requireTilesAuth(keyCache, styleHandler))
 	mux.Handle("GET /v1/tiles/styles/{name}", requireTilesAuth(keyCache, styleHandler))
+	mux.Handle("GET /v1/tiles/styles/{id}/{variant}", requireTilesAuth(keyCache, styleHandler))
+	mux.Handle("GET /v1/tiles/styles/{id}/{version}/{variant}", requireTilesAuth(keyCache, styleHandler))
 
 	// Tile endpoint — requires a service JWT with the tiles:serve scope.
 	tileHandler := server.NewTileHTTPHandler(idx, tileCache, a.Logger())
@@ -572,6 +573,16 @@ func initializePMTiles(a app.App) error {
 	return nil
 }
 
+// publicTilesURL is the public URL of the tiles API that styles point at: the gateway's host, port
+// and the /v1/tiles prefix (SERVICE_HOST[:SERVICE_PORT]SERVICE_PREFIX).
+func publicTilesURL(a app.App) string {
+	url := app.GetConfigField[string](a.Config(), FldServiceHost)
+	if port := app.GetConfigField[string](a.Config(), FldServicePort); port != "" {
+		url += ":" + port
+	}
+	return url + app.GetConfigField[string](a.Config(), FldServicePrefix)
+}
+
 // initializeRelease opens the release store (TILES_ROOT), loads the active release and starts
 // the poller that follows the pointer (and reloads on SIGHUP). A store that cannot be reached or
 // a release that fails to load is logged and leaves the planet tileset unavailable (503) until a
@@ -605,6 +616,8 @@ func initializeRelease(a app.App) error {
 	}
 
 	holder := release.NewHolder(store, a.Logger())
+	// A release whose styles do not parse or render is rejected at load time.
+	holder.SetValidator(server.ValidateStyles(publicTilesURL(a)))
 	if _, err := holder.Reload(context.Background()); err != nil {
 		lg.Errorf("cannot load a release from %s, tileset \"planet\" is unavailable until one loads: %v", location, err)
 	}
