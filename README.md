@@ -63,6 +63,7 @@ tilesservice only accepts **service client tokens** with the `tiles:serve` scope
 | `GET /v1/tiles/styles` | Service client token with `tiles:serve` scope |
 | `GET /v1/tiles/styles/{name}` | Service client token with `tiles:serve` scope |
 | `GET /v1/tiles/styles/{id}/{variant}`, `GET /v1/tiles/styles/{id}/{version}/{variant}` | Service client token with `tiles:serve` scope |
+| `GET /v1/tiles/fonts/{fontstack}/{file}`, `GET /v1/tiles/sprites/{file}` | Service client token with `tiles:serve` scope |
 | `GET /v1/tiles/{tileset}/{z}/{x}/{y}` | Service client token with `tiles:serve` scope |
 
 AUTHSERVICE_HOST and AUTHSERVICE_PORT must be configured so the service can fetch JWT public keys for token validation. Keys are fetched once at startup and then refreshed in the background (default every 300s — see JWT Key Refresh below); a failed refresh never clears the last known-good keys, and each fetch is bounded by a timeout.
@@ -194,6 +195,22 @@ Status codes: `400` for an invalid id/version in the path (anything outside `[A-
 [{"name":"light"},{"name":"dark"},
  {"name":"classic","id":"classic","label":"Classic","version":"3","default":true,"variants":["light","dark"]}]
 ```
+
+---
+
+### Glyphs and sprites
+
+MapLibre fetches font glyph ranges and sprite sheets with its own requests; they are served from the active release behind the same token as tiles and styles (so a client must send credentials on those requests too, not only on the style and tiles).
+
+| Endpoint | Release file | Content-Type |
+| -------- | ------------ | ------------ |
+| `GET /v1/tiles/fonts/{fontstack}/{start}-{end}.pbf` | `glyphs/<font>/<start>-<end>.pbf` | `application/x-protobuf` |
+| `GET /v1/tiles/sprites/{name}[@2x].json` | `sprites/<name>[@2x].json` | `application/json` |
+| `GET /v1/tiles/sprites/{name}[@2x].png` | `sprites/<name>[@2x].png` | `image/png` |
+
+- `{fontstack}` is the font name as MapLibre sends it (`Noto Sans Regular`). A stack of several fonts (`A,B`, up to 8) is served from the **first font that has the range**; glyph ranges are not merged across fonts.
+- The release file path is built only from validated parts: font names use `[A-Za-z0-9 _.()+-]` (no slash, no `..`, no leading dot, at most 256 characters), ranges are digits, sprite names `[A-Za-z0-9_-]+`. Anything else is `400`; an unknown font, range or sprite is `404`; `503` while no release is loaded.
+- `ETag` (`If-None-Match` answers `304`) and `Cache-Control: public, max-age=86400`. Files are read from the release once and then kept in memory (up to 64 MiB per release, emptied when another release becomes active); what does not fit is read on demand.
 
 ---
 

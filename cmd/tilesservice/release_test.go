@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -35,6 +36,20 @@ func writeTilesRelease(t *testing.T, root, id, build, tag string) {
 	style := filepath.Join(dir, "styles", "classic", "3")
 	if err := os.MkdirAll(style, 0o755); err != nil {
 		t.Fatal(err)
+	}
+	assets := map[string]string{
+		"glyphs/Noto Sans Regular/0-255.pbf": "glyphs-" + id,
+		"sprites/light.json":                 `{"sprite":"` + id + `"}`,
+		"sprites/light.png":                  "png-" + id,
+	}
+	for rel, content := range assets {
+		full := filepath.Join(dir, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 	// the style names its release and the tile URL it was rendered with
 	doc := fmt.Sprintf(`{"version":8,"name":%q,"sources":{"p":{"type":"vector","tiles":["{{.TilesBaseURL}}/{{.Tileset}}/{z}/{x}/{y}"]}}}`, id)
@@ -285,5 +300,68 @@ func TestStyleRoutesFromRelease(t *testing.T) {
 	// and a tileset named like a style segment does not shadow them
 	if resp, _ := getPlanet(t, port, "/v1/tiles/planet/0/0/0", bearer, ""); resp.StatusCode != http.StatusOK {
 		t.Errorf("planet tile: %d", resp.StatusCode)
+	}
+}
+
+// Glyphs and sprites come from the active release behind the same token as tiles and styles; a
+// switch is visible at once, and path tricks never leave glyphs/ and sprites/.
+func TestAssetRoutesFromRelease(t *testing.T) {
+	root := t.TempDir()
+	writeTilesRelease(t, root, "r-1", "b1", "tile-one")
+	writeTilesRelease(t, root, "r-2", "b2", "tile-two")
+	pointCurrent(t, root, "r-1")
+	if err := os.WriteFile(filepath.Join(root, "releases", "r-1", "manifest.pbf"), []byte("manifest-secret"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	port, bearer := startPlanetApp(t, map[string]string{"TILES_ROOT": root, "RELOAD_POLL_SECONDS": "1"})
+
+	for path, want := range map[string]struct{ ct, body string }{
+		"/v1/tiles/fonts/Noto%20Sans%20Regular/0-255.pbf":           {"application/x-protobuf", "glyphs-r-1"},
+		"/v1/tiles/fonts/Noto%20Sans%20Regular%2CUnknown/0-255.pbf": {"application/x-protobuf", "glyphs-r-1"},
+		"/v1/tiles/sprites/light.json":                              {"application/json", `{"sprite":"r-1"}`},
+		"/v1/tiles/sprites/light.png":                               {"image/png", "png-r-1"},
+	} {
+		resp, body := getPlanet(t, port, path, bearer, "identity")
+		if resp.StatusCode != http.StatusOK || string(body) != want.body || resp.Header.Get("Content-Type") != want.ct {
+			t.Errorf("%s: %d %q %q", path, resp.StatusCode, resp.Header.Get("Content-Type"), body)
+		}
+		if resp, _ := getPlanet(t, port, path, "", ""); resp.StatusCode != http.StatusUnauthorized {
+			t.Errorf("%s without a token: %d, want 401", path, resp.StatusCode)
+		}
+		if resp, _ := getPlanet(t, port, path, "Bearer nonsense", ""); resp.StatusCode != http.StatusUnauthorized {
+			t.Errorf("%s with a bad token: %d, want 401", path, resp.StatusCode)
+		}
+	}
+
+	// nothing outside glyphs/ and sprites/ is reachable, whatever the encoding
+	for _, path := range []string{
+		"/v1/tiles/fonts/..%2Fmanifest/0-255.pbf",
+		"/v1/tiles/fonts/%2e%2e/0-255.pbf",
+		"/v1/tiles/fonts/Noto%20Sans%20Regular/..%2F..%2Fmanifest.pbf",
+		"/v1/tiles/fonts/Noto%20Sans%20Regular/manifest.pbf",
+		"/v1/tiles/sprites/..%2Fmanifest.pbf",
+		"/v1/tiles/sprites/%2e%2e%2fmanifest.json",
+		"/v1/tiles/sprites/light.json%00.png",
+	} {
+		resp, body := getPlanet(t, port, path, bearer, "identity")
+		if resp.StatusCode == http.StatusOK || bytes.Contains(body, []byte("secret")) {
+			t.Errorf("%s: %d %q", path, resp.StatusCode, body)
+		}
+	}
+
+	pointCurrent(t, root, "r-2")
+	waitUntil(t, "assets of r-2", func() bool {
+		_, body := getPlanet(t, port, "/v1/tiles/sprites/light.json", bearer, "identity")
+		return string(body) == `{"sprite":"r-2"}`
+	})
+}
+
+// Without a release store the asset routes exist and answer 503, like the planet tiles.
+func TestAssetRoutesWithoutRelease(t *testing.T) {
+	port, bearer := startPlanetApp(t, nil)
+	for _, path := range []string{"/v1/tiles/fonts/Noto%20Sans%20Regular/0-255.pbf", "/v1/tiles/sprites/light.json"} {
+		if resp, _ := getPlanet(t, port, path, bearer, ""); resp.StatusCode != http.StatusServiceUnavailable {
+			t.Errorf("%s: %d, want 503", path, resp.StatusCode)
+		}
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -24,6 +25,9 @@ const PointerFile = "current.json"
 
 // pointerSchema is the schema of PointerFile this code reads.
 const pointerSchema = 1
+
+// ErrNotFound is wrapped by ReadFile errors for a file that does not exist in the release.
+var ErrNotFound = errors.New("release: file not found")
 
 // Location is one release inside a store. Paths are relative to the release and are validated by
 // the caller (ValidRel).
@@ -100,9 +104,19 @@ func (l fileLoc) ReadFile(_ context.Context, rel string) ([]byte, error) {
 	}
 	f, err := os.Open(filepath.Join(l.dir, filepath.FromSlash(rel)))
 	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, fmt.Errorf("%w: %s", ErrNotFound, rel)
+		}
 		return nil, err
 	}
 	defer func() { _ = f.Close() }()
+	st, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if st.IsDir() {
+		return nil, fmt.Errorf("%w: %s is a directory", ErrNotFound, rel)
+	}
 	return readLimited(f, MaxFileSize)
 }
 
@@ -173,7 +187,11 @@ func (l *s3Loc) ReadFile(ctx context.Context, rel string) ([]byte, error) {
 	if err := ValidRel(rel); err != nil {
 		return nil, err
 	}
-	return readObject(ctx, l.client, l.bucket, l.prefix+rel)
+	data, err := readObject(ctx, l.client, l.bucket, l.prefix+rel)
+	if errors.Is(err, objstore.ErrNotFound) {
+		return nil, fmt.Errorf("%w: %s", ErrNotFound, rel)
+	}
+	return data, err
 }
 
 func (l *s3Loc) OpenArchive(ctx context.Context, rel string) (*pmtiles.Reader, error) {

@@ -18,6 +18,8 @@
 //     ("light", "dark") or style id of the active release (requires tiles:serve scope)
 //   - GET /v1/tiles/styles/{id}/{variant} - Newest version of a release style, variant light or dark
 //   - GET /v1/tiles/styles/{id}/{version}/{variant} - A fixed version of a release style
+//   - GET /v1/tiles/fonts/{fontstack}/{range}.pbf - A glyph range of the active release
+//   - GET /v1/tiles/sprites/{name}[@2x].{json,png} - A sprite sheet of the active release
 package main
 
 import (
@@ -417,6 +419,18 @@ func startHTTPServer(a app.App) error {
 	mux.Handle("GET /v1/tiles/styles/{name}", requireTilesAuth(keyCache, styleHandler))
 	mux.Handle("GET /v1/tiles/styles/{id}/{variant}", requireTilesAuth(keyCache, styleHandler))
 	mux.Handle("GET /v1/tiles/styles/{id}/{version}/{variant}", requireTilesAuth(keyCache, styleHandler))
+
+	// Glyph and sprite endpoints — same auth as tiles and styles; served from the active release.
+	// Beware when adding TileJSON: "GET /v1/tiles/{tileset}/tiles.json" conflicts with
+	// "sprites/{file}" and "styles/{name}" (ServeMux panics at registration, neither is more
+	// specific for /sprites/tiles.json). Register the literal "GET /v1/tiles/planet/tiles.json".
+	var assetReleases server.ReleaseSource
+	if holder, ok := a.AppData("Release").(*release.Holder); ok && holder != nil {
+		assetReleases = holder
+	}
+	assetHandler := server.NewAssetHTTPHandler(assetReleases, a.Logger())
+	mux.Handle("GET /v1/tiles/fonts/{fontstack}/{file}", requireTilesAuth(keyCache, assetHandler))
+	mux.Handle("GET /v1/tiles/sprites/{file}", requireTilesAuth(keyCache, assetHandler))
 
 	// Tile endpoint — requires a service JWT with the tiles:serve scope.
 	tileHandler := server.NewTileHTTPHandler(idx, tileCache, a.Logger())
