@@ -198,7 +198,7 @@ func readObject(ctx context.Context, c *objstore.Client, bucket, key string) ([]
 	}
 	buf := make([]byte, obj.Size())
 	n, err := obj.ReadAt(buf, 0)
-	if err != nil && !(errors.Is(err, io.EOF) && n == len(buf)) {
+	if err != nil && (!errors.Is(err, io.EOF) || n != len(buf)) {
 		return nil, fmt.Errorf("release: reading s3://%s/%s: %w", bucket, key, err)
 	}
 	return buf, nil

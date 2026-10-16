@@ -29,7 +29,8 @@ const ContentTypeMVT = "application/vnd.mapbox-vector-tile"
 type TileHTTPHandler struct {
 	idx    *tileindex.TileIndex
 	cache  tilecache.TileCache
-	planet TileArchive // PMTiles archive of the planet tileset; nil = disabled
+	planet TileArchive   // fixed PMTiles archive of the planet tileset; nil = disabled
+	source ArchiveSource // changing archive (release reload); takes precedence over planet
 	l      *log.Logger
 }
 

@@ -9,9 +9,10 @@
 // JWT carrying the "tiles:serve" scope; user JWTs are rejected (client
 // requests go through swayrider-api, which injects its own service token):
 //   - GET /v1/tiles/ping - Health check endpoint (public)
+//   - GET /v1/tiles/ready - Readiness: loaded release, tileset build, style versions (public)
 //   - GET /v1/tiles/{tileset}/{z}/{x}/{y} - Retrieve a vector tile (requires tiles:serve scope);
-//     tileset "planet" is read from a PMTiles archive (PMTILES_URL), every other name from the
-//     legacy MBTiles index (TILES_PATH)
+//     tileset "planet" is read from a PMTiles archive (a release found through TILES_ROOT, or a
+//     single archive from PMTILES_URL), every other name from the legacy MBTiles index (TILES_PATH)
 //   - GET /v1/tiles/styles - List map styles (requires tiles:serve scope)
 //   - GET /v1/tiles/styles/{name} - Retrieve a map style (requires tiles:serve scope)
 package main
@@ -21,8 +22,10 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/rs/cors"
@@ -33,6 +36,7 @@ import (
 	"github.com/swayrider/swlib/jwtkeys"
 	log "github.com/swayrider/swlib/logger"
 	"github.com/swayrider/tilesservice/internal/pmtiles"
+	"github.com/swayrider/tilesservice/internal/release"
 	"github.com/swayrider/tilesservice/internal/server"
 	"github.com/swayrider/tilesservice/internal/tilecache"
 	"github.com/swayrider/tilesservice/internal/tileindex"
@@ -94,6 +98,14 @@ const (
 	FldPMTilesURL = "pmtiles-url" // CLI flag name for the planet PMTiles archive location
 	EnvPMTilesURL = "PMTILES_URL" // Environment variable name for the planet PMTiles archive location
 	DefPMTilesURL = ""            // Default (empty: tileset "planet" disabled)
+
+	FldTilesRoot = "tiles-root" // CLI flag name for the release store
+	EnvTilesRoot = "TILES_ROOT" // Environment variable name for the release store
+	DefTilesRoot = ""           // Default (empty: no release store)
+
+	FldReloadPollSeconds = "reload-poll-seconds" // CLI flag name for the release pointer poll interval
+	EnvReloadPollSeconds = "RELOAD_POLL_SECONDS" // Environment variable name for the release pointer poll interval
+	DefReloadPollSeconds = 10                    // Default poll interval in seconds (0 = reload only on SIGHUP)
 
 	FldS3Endpoint        = "s3-endpoint"          // CLI flag name for the S3 endpoint
 	EnvS3Endpoint        = "S3_ENDPOINT"          // Environment variable name for the S3 endpoint
@@ -237,6 +249,10 @@ func newApp() app.App {
 			app.NewStringConfigField(
 				FldPMTilesURL, EnvPMTilesURL, "Location of the planet PMTiles archive: file:///path/tiles.pmtiles or s3://bucket/key (empty disables the planet tileset)", DefPMTilesURL),
 			app.NewStringConfigField(
+				FldTilesRoot, EnvTilesRoot, "Release store of the planet tileset: a directory with a current symlink (or file:///dir) or s3://bucket[/prefix] with current.json; takes precedence over PMTILES_URL", DefTilesRoot),
+			app.NewIntConfigField(
+				FldReloadPollSeconds, EnvReloadPollSeconds, "Seconds between checks of the release pointer (0 = only on SIGHUP)", DefReloadPollSeconds),
+			app.NewStringConfigField(
 				FldS3Endpoint, EnvS3Endpoint, "S3-compatible endpoint for s3:// locations (e.g. http://garage:3900)", DefS3Endpoint),
 			app.NewStringConfigField(
 				FldS3Region, EnvS3Region, "S3 signing region", DefS3Region),
@@ -265,7 +281,7 @@ func newApp() app.App {
 		).
 		WithConfigFields(app.JWTKeysConfigFields()...).
 		WithAppData("JWTKeyCache", jwtKeyCache).
-		WithInitializers(initializeTileIndex, initializePMTiles, app.JWTKeysInitializer(jwtKeyCache)).
+		WithInitializers(initializeTileIndex, initializePMTiles, initializeRelease, app.JWTKeysInitializer(jwtKeyCache)).
 		WithBackgroundRoutines(app.JWTKeysFetcher(jwtKeyCache)).
 		WithHTTP(startHTTPServer, stopHTTPServer)
 }
@@ -391,6 +407,9 @@ func startHTTPServer(a app.App) error {
 		}
 	})
 
+	// Readiness endpoint — public, no auth (probes carry no token).
+	mux.Handle("GET /v1/tiles/ready", server.NewReadyHandler(readiness(a)))
+
 	// Style endpoints — require a service JWT with the tiles:serve scope.
 	// Registered before the tile wildcard route to ensure the static
 	// /v1/tiles/styles prefix takes priority.
@@ -400,7 +419,9 @@ func startHTTPServer(a app.App) error {
 
 	// Tile endpoint — requires a service JWT with the tiles:serve scope.
 	tileHandler := server.NewTileHTTPHandler(idx, tileCache, a.Logger())
-	if archive, ok := a.AppData("PMTiles").(*pmtiles.Reader); ok && archive != nil {
+	if holder, ok := a.AppData("Release").(*release.Holder); ok && holder != nil {
+		tileHandler.WithArchiveSource(holderArchives{holder})
+	} else if archive, ok := a.AppData("PMTiles").(*pmtiles.Reader); ok && archive != nil {
 		tileHandler.WithArchive(archive)
 	}
 	mux.Handle("GET /v1/tiles/{tileset}/{z}/{x}/{y}", requireTilesAuth(keyCache, tileHandler))
@@ -415,8 +436,12 @@ func startHTTPServer(a app.App) error {
 
 	// Create HTTP server
 	httpServer = &http.Server{
-		Addr:    fmt.Sprintf(":%d", httpPort),
-		Handler: handler,
+		Addr:              fmt.Sprintf(":%d", httpPort),
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 
 	// Start server in goroutine
@@ -461,6 +486,15 @@ func stopHTTPServer(a app.App) {
 		} else {
 			lg.Infoln("disk cache closed")
 		}
+	}
+
+	// Stop the release poller and close the active release
+	if hup, _ := a.AppData("ReleaseSignals").(chan os.Signal); hup != nil {
+		signal.Stop(hup)
+		close(hup)
+	}
+	if holder, _ := a.AppData("Release").(*release.Holder); holder != nil {
+		holder.Close()
 	}
 
 	// Close the planet archive
@@ -536,4 +570,85 @@ func initializePMTiles(a app.App) error {
 		location, h.MinZoom, h.MaxZoom, h.AddressedTiles, h.TileCompression, reader.ID())
 	a.SetAppData("PMTiles", reader)
 	return nil
+}
+
+// initializeRelease opens the release store (TILES_ROOT), loads the active release and starts
+// the poller that follows the pointer (and reloads on SIGHUP). A store that cannot be reached or
+// a release that fails to load is logged and leaves the planet tileset unavailable (503) until a
+// later check succeeds, so the legacy tilesets keep working.
+func initializeRelease(a app.App) error {
+	lg := a.Logger().Derive(log.WithFunction("initializeRelease"))
+
+	location := app.GetConfigField[string](a.Config(), FldTilesRoot)
+	if location == "" {
+		return nil
+	}
+	if app.GetConfigField[string](a.Config(), FldPMTilesURL) != "" {
+		lg.Warnln("TILES_ROOT and PMTILES_URL are both set: using TILES_ROOT, ignoring PMTILES_URL")
+	}
+	if strings.HasPrefix(location, "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return fmt.Errorf("cannot expand TILES_ROOT: %w", err)
+		}
+		location = filepath.Join(home, location[2:])
+	}
+
+	store, err := release.OpenStore(location, tilesource.S3{
+		Endpoint:  app.GetConfigField[string](a.Config(), FldS3Endpoint),
+		Region:    app.GetConfigField[string](a.Config(), FldS3Region),
+		AccessKey: app.GetConfigField[string](a.Config(), FldS3AccessKeyID),
+		SecretKey: app.GetConfigField[string](a.Config(), FldS3SecretAccessKey),
+	})
+	if err != nil {
+		return fmt.Errorf("TILES_ROOT %q: %w", location, err)
+	}
+
+	holder := release.NewHolder(store, a.Logger())
+	if _, err := holder.Reload(context.Background()); err != nil {
+		lg.Errorf("cannot load a release from %s, tileset \"planet\" is unavailable until one loads: %v", location, err)
+	}
+	poll := time.Duration(app.GetConfigField[int](a.Config(), FldReloadPollSeconds)) * time.Second
+	holder.Start(poll)
+	a.SetAppData("Release", holder)
+
+	hup := make(chan os.Signal, 1)
+	signal.Notify(hup, syscall.SIGHUP)
+	go func() {
+		for range hup {
+			holder.Trigger()
+		}
+	}()
+	a.SetAppData("ReleaseSignals", hup)
+	return nil
+}
+
+// holderArchives adapts a release holder to the tile handler's archive source.
+type holderArchives struct{ h *release.Holder }
+
+func (s holderArchives) Archive() (server.TileArchive, func()) {
+	rel, done := s.h.Acquire()
+	if rel == nil {
+		return nil, done
+	}
+	return rel.Archive, done
+}
+
+// readiness builds the readiness report: with a release store the planet tileset is ready once a
+// release is loaded; with a single archive once it opened; without either it is disabled, which
+// does not make the service unready (the legacy tilesets still work).
+func readiness(a app.App) server.ReadyFunc {
+	return func() (bool, any) {
+		if holder, _ := a.AppData("Release").(*release.Holder); holder != nil {
+			st := holder.Status()
+			return st.Loaded, st
+		}
+		if archive, _ := a.AppData("PMTiles").(*pmtiles.Reader); archive != nil {
+			return true, map[string]any{"mode": "archive", "id": archive.ID()}
+		}
+		if app.GetConfigField[string](a.Config(), FldPMTilesURL) != "" {
+			return false, map[string]any{"mode": "archive", "error": "archive not open"}
+		}
+		return true, map[string]any{"mode": "disabled"}
+	}
 }

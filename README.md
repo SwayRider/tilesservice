@@ -16,13 +16,28 @@ The tilesservice exposes an HTTP API for tile serving:
 
 ### Planet tileset (PMTiles)
 
-`GET /v1/tiles/planet/{z}/{x}/{y}` is served from a single [PMTiles v3](https://github.com/protomaps/PMTiles) archive (Protomaps basemap, gzip MVT, z0–15) configured with `PMTILES_URL`: a local file (`file:///path/tiles.pmtiles`) or an object in an S3-compatible store (`s3://bucket/key`, read with ranged GETs; `S3_ENDPOINT`, `S3_REGION`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, use the read-only key). Every other tileset name still uses the legacy MBTiles index (`TILES_PATH`).
+`GET /v1/tiles/planet/{z}/{x}/{y}` is served from a single [PMTiles v3](https://github.com/protomaps/PMTiles) archive (Protomaps basemap, gzip MVT, z0–15) found in one of two ways. Every other tileset name still uses the legacy MBTiles index (`TILES_PATH`).
+
+- **A release store (`TILES_ROOT`, the normal setup):** a directory (`/data/tiles` or `file:///data/tiles`) holding a `current` symlink to the active release directory, or an S3-compatible bucket (`s3://bucket[/prefix]`, ranged GETs; `S3_ENDPOINT`, `S3_REGION`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, use the read-only key) holding `current.json`. A release is a `manifest.json` plus the archive (and, later, styles, glyphs and sprites); the layout is the contract in `data-manager/SERVICES.md`. The service switches to a new release by itself, see below.
+- **A single archive (`PMTILES_URL`):** a local file (`file:///path/tiles.pmtiles`) or `s3://bucket/key`, opened once at startup (a new archive needs a restart). Ignored, with a warning, when `TILES_ROOT` is set.
+
+#### Releases and reload
+
+```text
+<TILES_ROOT>/current -> releases/<id>          (file store: a relative symlink)
+<bucket>/current.json  {"schema":1,"release":"<id>","prefix":"releases/<id>/","updated_at":"…"}   (S3 store)
+```
+
+- The service checks the pointer every `RELOAD_POLL_SECONDS` (default 10; `0` = only on `SIGHUP`) and on `SIGHUP`. When it names a release it has not loaded, the service reads `manifest.json`, validates it, opens the archive and then switches. Requests that already hold the old release finish on it, which is closed after its last request; new requests see the new one. No request fails during a switch.
+- A release that fails to load (missing or invalid manifest, missing or corrupt archive, unreachable store) is **not** switched to: the service keeps serving the current release and reports the error in `/v1/tiles/ready` (`last_error`) and the log. Pointing `current` back (rollback) or fixing the release clears it.
+- Without any loadable release at startup the service still starts: `planet` answers `503` and `/ready` answers `503` until a release loads; the legacy tilesets are unaffected.
+- `manifest.json` (schema 1) is validated: tileset name `planet`, release id and style ids/versions from a safe character set, and every path in it stays inside the release (no absolute paths, `..` or backslashes).
 
 - **Zoom range** comes from the archive header: tiles outside it, and missing tiles, answer `204`; invalid coordinates `400`; `503` when the planet archive is not configured or could not be opened (see the startup log).
 - **Compression:** stored gzip tiles are sent as they are to clients that accept gzip, and decoded for those that do not; an archive with uncompressed tiles is gzipped on demand. Brotli/zstd archives and non-MVT archives are refused at startup.
 - **Caching:** weak `ETag` (archive id + coordinates, `If-None-Match` answers `304`), `Cache-Control: public, max-age=86400`.
 - **Reader:** `internal/pmtiles` reads through an `io.ReaderAt` (file, or `internal/objstore` for S3: ranged GETs signed with SigV4, no SDK dependency); leaf directories are cached in memory.
-- Archives are validated at open (header, section bounds against the file size, so a truncated upload is refused). The archive is opened once at startup; reload on release switch, `tiles.json`, styles, glyphs and sprites follow in later PRs (see `data-manager/TILESSERVICE-PMTILES.md`).
+- Archives are validated at open (header, section bounds against the file size, so a truncated upload is refused). `tiles.json`, manifest-driven styles, glyphs and sprites follow in later PRs (see `data-manager/TILESSERVICE-PMTILES.md`).
 
 **Check an archive or the object store credentials without the gateway:** `go run ./cmd/pmtiles-probe -url s3://swayrider-tiles/releases/r-test-1/tiles.pmtiles [-tile 12/2097/1373 -out tile.gz]` opens it with the same code and `S3_*` environment variables as the service and prints header, bounds, layers and (optionally) one tile.
 
@@ -44,6 +59,7 @@ tilesservice only accepts **service client tokens** with the `tiles:serve` scope
 | HTTP endpoint | Access |
 |---|---|
 | `GET /v1/tiles/ping` | Public — no token required |
+| `GET /v1/tiles/ready` | Public — no token required |
 | `GET /v1/tiles/styles` | Service client token with `tiles:serve` scope |
 | `GET /v1/tiles/styles/{name}` | Service client token with `tiles:serve` scope |
 | `GET /v1/tiles/{tileset}/{z}/{x}/{y}` | Service client token with `tiles:serve` scope |
@@ -69,6 +85,10 @@ Configuration is provided via environment variables or CLI flags. See `env.examp
 | -------------------- | -------- | ------- | ----------- |
 | `TILES_PATH` | `-tiles-path` | | Path to the tiles storage directory (required) |
 | `STYLES_PATH` | `-styles-path` | | Path to the map styles directory |
+| `TILES_ROOT` | `-tiles-root` | | Release store of the `planet` tileset: a directory with a `current` symlink (or `file:///dir`), or `s3://bucket[/prefix]` with `current.json`. Takes precedence over `PMTILES_URL` |
+| `RELOAD_POLL_SECONDS` | `-reload-poll-seconds` | 10 | Seconds between checks of the release pointer (`0` = only on `SIGHUP`) |
+| `PMTILES_URL` | `-pmtiles-url` | | A single planet archive (`file:///…` or `s3://bucket/key`), opened once at startup |
+| `S3_ENDPOINT`, `S3_REGION`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` | `-s3-…` | region `garage` | Object store for `s3://` locations (use the read-only key; set the secret via the environment) |
 
 ### Compression Settings
 
@@ -120,6 +140,28 @@ Health check endpoint that returns HTTP 200.
 ```json
 {"status":"ok"}
 ```
+
+---
+
+### Ready
+
+Readiness: whether the planet tileset can be served. Like ping it needs no token (probes carry none); it exposes release ids and versions only.
+
+- **Endpoint:** `GET /v1/tiles/ready`
+- **Access:** Public
+- **Status:** `200` when ready, `503` otherwise. With `TILES_ROOT`, ready means a release is loaded; with `PMTILES_URL`, that the archive opened; with neither the service is ready (only the legacy tilesets are served) and reports `"mode":"disabled"`.
+
+**Response (release store):**
+
+```json
+{"ready":true,"planet":{"loaded":true,"release":"r-20261005-1","key":"/data/tiles/releases/r-20261005-1","tileset_build":"20261004","tileset_date":"2026-10-04","schema_version":"4.15.2","styles":{"classic":"3"},"loaded_at":"…","last_check":"…"}}
+```
+
+`last_error` appears while the last pointer check failed (the previous release keeps serving); `ready` stays true then.
+
+### HTTP server timeouts
+
+`ReadHeaderTimeout` 10 s, `ReadTimeout` 30 s, `WriteTimeout` 60 s, `IdleTimeout` 120 s.
 
 ---
 

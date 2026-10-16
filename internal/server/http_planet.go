@@ -12,11 +12,12 @@ import (
 
 	"github.com/swayrider/swlib/http/compression"
 	"github.com/swayrider/tilesservice/internal/pmtiles"
+	"github.com/swayrider/tilesservice/internal/release"
 )
 
 // PlanetTileset is the tileset name served from a PMTiles archive. Every other tileset name
 // still goes to the legacy MBTiles index.
-const PlanetTileset = "planet"
+const PlanetTileset = release.PlanetTileset
 
 // TileArchive is the PMTiles archive behind the planet tileset (implemented by *pmtiles.Reader).
 type TileArchive interface {
@@ -27,15 +28,41 @@ type TileArchive interface {
 	Tile(z uint8, x, y uint32) ([]byte, error)
 }
 
-// WithArchive enables the planet tileset on this handler; a nil archive leaves it disabled.
+// ArchiveSource hands out the current planet archive. The caller must call the returned func when
+// it is done with the archive; a source that has no archive returns (nil, no-op).
+type ArchiveSource interface {
+	Archive() (TileArchive, func())
+}
+
+// WithArchive enables the planet tileset on this handler with a fixed archive; a nil archive
+// leaves it disabled.
 func (h *TileHTTPHandler) WithArchive(a TileArchive) *TileHTTPHandler {
 	h.planet = a
+	h.source = nil
 	return h
+}
+
+// WithArchiveSource enables the planet tileset on this handler with an archive that can change
+// while the service runs (a release reload).
+func (h *TileHTTPHandler) WithArchiveSource(s ArchiveSource) *TileHTTPHandler {
+	h.source = s
+	h.planet = nil
+	return h
+}
+
+// archive returns the archive to use for one request and the func that releases it.
+func (h *TileHTTPHandler) archive() (TileArchive, func()) {
+	if h.source != nil {
+		return h.source.Archive()
+	}
+	return h.planet, func() {}
 }
 
 // servePlanet answers GET /v1/tiles/planet/{z}/{x}/{y}.
 func (h *TileHTTPHandler) servePlanet(w http.ResponseWriter, r *http.Request, z, x, y uint64) {
-	if h.planet == nil {
+	archive, done := h.archive()
+	defer done()
+	if archive == nil {
 		http.Error(w, "Tileset not available", http.StatusServiceUnavailable)
 		return
 	}
@@ -47,14 +74,14 @@ func (h *TileHTTPHandler) servePlanet(w http.ResponseWriter, r *http.Request, z,
 		http.Error(w, "Tile coordinate out of range for zoom level", http.StatusBadRequest)
 		return
 	}
-	hdr := h.planet.Header()
+	hdr := archive.Header()
 	w.Header().Set("Vary", "Accept-Encoding")
 	if z < uint64(hdr.MinZoom) || z > uint64(hdr.MaxZoom) {
 		w.WriteHeader(http.StatusNoContent) // outside the archive's zoom range: clients over-zoom
 		return
 	}
 
-	data, err := h.planet.Tile(uint8(z), uint32(x), uint32(y))
+	data, err := archive.Tile(uint8(z), uint32(x), uint32(y))
 	if err != nil {
 		if errors.Is(err, pmtiles.ErrTileNotFound) {
 			w.WriteHeader(http.StatusNoContent)
@@ -66,7 +93,7 @@ func (h *TileHTTPHandler) servePlanet(w http.ResponseWriter, r *http.Request, z,
 	}
 
 	// Weak validator: the gzip and identity representations of one tile differ byte-wise.
-	etag := fmt.Sprintf(`W/"%s-%d-%d-%d"`, h.planet.ID(), z, x, y)
+	etag := fmt.Sprintf(`W/"%s-%d-%d-%d"`, archive.ID(), z, x, y)
 	w.Header().Set("ETag", etag)
 	w.Header().Set("Cache-Control", "public, max-age=86400")
 	if ifNoneMatch(r.Header.Get("If-None-Match"), etag) {
