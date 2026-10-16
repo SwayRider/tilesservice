@@ -32,6 +32,15 @@ func writeTilesRelease(t *testing.T, root, id, build, tag string) {
 	if err := os.WriteFile(filepath.Join(dir, "manifest.json"), []byte(fmt.Sprintf(releaseManifest, id, build)), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	style := filepath.Join(dir, "styles", "classic", "3")
+	if err := os.MkdirAll(style, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// the style names its release and the tile URL it was rendered with
+	doc := fmt.Sprintf(`{"version":8,"name":%q,"sources":{"p":{"type":"vector","tiles":["{{.TilesBaseURL}}/{{.Tileset}}/{z}/{x}/{y}"]}}}`, id)
+	if err := os.WriteFile(filepath.Join(style, "light.json"), []byte(doc), 0o644); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func pointCurrent(t *testing.T, root, id string) {
@@ -218,5 +227,63 @@ func TestTilesRootTakesPrecedenceOverPMTilesURL(t *testing.T) {
 	port, bearer := startPlanetApp(t, map[string]string{"TILES_ROOT": root, "PMTILES_URL": "file://" + path})
 	if got := tileBody(t, port, bearer); got != "from-release" {
 		t.Fatalf("tile = %q", got)
+	}
+}
+
+// The style routes sit next to the tile wildcard: a literal "styles" must win over {tileset}, for
+// every path shape, and all of them stay behind the service token.
+func TestStyleRoutesFromRelease(t *testing.T) {
+	root := t.TempDir()
+	writeTilesRelease(t, root, "r-1", "b1", "tile-one")
+	pointCurrent(t, root, "r-1")
+	port, bearer := startPlanetApp(t, map[string]string{
+		"TILES_ROOT": root, "SERVICE_HOST": "https://api.example.com", "SERVICE_PREFIX": "/v1/tiles",
+	})
+
+	for _, path := range []string{
+		"/v1/tiles/styles/light",           // alias of the default style
+		"/v1/tiles/styles/classic",         // style id
+		"/v1/tiles/styles/classic/light",   // newest version
+		"/v1/tiles/styles/classic/3/light", // fixed version, 4 segments like a tile URL
+	} {
+		resp, body := getPlanet(t, port, path, bearer, "identity")
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("%s: %d %s", path, resp.StatusCode, body)
+			continue
+		}
+		var style struct {
+			Name    string `json:"name"`
+			Sources struct {
+				P struct {
+					Tiles []string `json:"tiles"`
+				} `json:"p"`
+			} `json:"sources"`
+		}
+		if err := json.Unmarshal(body, &style); err != nil || style.Name != "r-1" ||
+			len(style.Sources.P.Tiles) != 1 || style.Sources.P.Tiles[0] != "https://api.example.com/v1/tiles/planet/{z}/{x}/{y}" {
+			t.Errorf("%s: unexpected style %q (%v)", path, body, err)
+		}
+		if resp, _ := getPlanet(t, port, path, "", ""); resp.StatusCode != http.StatusUnauthorized {
+			t.Errorf("%s without a token: %d, want 401", path, resp.StatusCode)
+		}
+	}
+
+	// the listing
+	resp, body := getPlanet(t, port, "/v1/tiles/styles", bearer, "identity")
+	var list []struct {
+		Name string `json:"name"`
+		ID   string `json:"id"`
+	}
+	if err := json.Unmarshal(body, &list); err != nil || resp.StatusCode != http.StatusOK || len(list) == 0 {
+		t.Fatalf("list: %d %q (%v)", resp.StatusCode, body, err)
+	}
+
+	// tiles are still tiles
+	if got := tileBody(t, port, bearer); got != "tile-one" {
+		t.Errorf("tile = %q", got)
+	}
+	// and a tileset named like a style segment does not shadow them
+	if resp, _ := getPlanet(t, port, "/v1/tiles/planet/0/0/0", bearer, ""); resp.StatusCode != http.StatusOK {
+		t.Errorf("planet tile: %d", resp.StatusCode)
 	}
 }
