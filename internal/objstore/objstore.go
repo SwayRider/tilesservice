@@ -16,6 +16,9 @@ import (
 	"time"
 )
 
+// ErrNotFound is wrapped by the error Open returns for a missing object.
+var ErrNotFound = errors.New("not found")
+
 // Config describes the store. With an empty AccessKey requests are sent unsigned (public buckets, tests).
 type Config struct {
 	Endpoint  string // e.g. http://garage:3900 or https://s3.example.com
@@ -84,7 +87,7 @@ func (c *Client) Open(ctx context.Context, bucket, key string) (*Object, error) 
 	defer func() { _ = resp.Body.Close() }()
 	switch {
 	case resp.StatusCode == http.StatusNotFound:
-		return nil, fmt.Errorf("objstore: s3://%s/%s not found", bucket, key)
+		return nil, fmt.Errorf("objstore: s3://%s/%s %w", bucket, key, ErrNotFound)
 	case resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusUnauthorized:
 		return nil, fmt.Errorf("objstore: access to s3://%s/%s denied (HTTP %d): check the key and bucket permissions", bucket, key, resp.StatusCode)
 	case resp.StatusCode != http.StatusOK:
